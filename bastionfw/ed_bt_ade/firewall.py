@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import shutil
 from abc import ABC, abstractmethod
 from pathlib import Path
@@ -15,6 +16,19 @@ from .config import FirewallConfig
 from .validation import parse_ip, parse_network
 
 LOGGER = logging.getLogger(__name__)
+
+
+def _state_permissions(path: Path) -> None:
+    """Harden a SQLite state file to owner-only access.
+
+    Ban state reveals which addresses attacked the host and confirms the
+    whitelist topology; it must not be world-readable.
+    """
+    try:
+        os.chmod(path, 0o600)
+    except OSError:  # pragma: no cover - non-POSIX or read-only filesystem
+        LOGGER.warning("could not harden firewall state permissions",
+                       extra={"event": "state_permissions_failed", "path": str(path)})
 
 
 class FirewallError(RuntimeError):
@@ -166,6 +180,7 @@ class FirewallOrchestrator:
             "CREATE TABLE IF NOT EXISTS bans "
             "(address TEXT PRIMARY KEY, expires_at REAL NOT NULL)")
         self._db.commit()
+        _state_permissions(config.state_db)
         self._load_active()
 
     def _load_active(self) -> None:

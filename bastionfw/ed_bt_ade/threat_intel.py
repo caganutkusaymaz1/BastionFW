@@ -11,7 +11,10 @@ import os
 from pathlib import Path
 import sqlite3
 import time
+from urllib.parse import quote
 from urllib.request import Request, urlopen
+
+from .validation import parse_ip
 
 LOGGER = logging.getLogger(__name__)
 
@@ -152,6 +155,11 @@ class ThreatIntelClient:
         self.bucket = TokenBucket(float(getattr(config, "requests_per_second")))
         self.breaker = CircuitBreaker(int(getattr(config, "circuit_failure_threshold")),
                                       float(getattr(config, "circuit_reset_seconds")))
+        try:
+            os.chmod(getattr(config, "cache_db"), 0o600)
+        except OSError:  # pragma: no cover - non-POSIX or read-only filesystem
+            LOGGER.warning("could not harden threat-intel cache permissions",
+                           extra={"event": "state_permissions_failed"})
 
     async def lookup(self, ip: str) -> Reputation | None:
         if not self.enabled or not self.url:
@@ -181,7 +189,10 @@ class ThreatIntelClient:
         api_key = os.environ.get("ED_BT_ADE_ABUSEIPDB_KEY")
         if api_key:
             headers["Key"] = api_key
-        request = Request(self.url + "?ipAddress=" + ip, headers=headers)
+        # encode the caller-supplied address; a malformed value must not
+        # turn into a query-string injection via raw interpolation.
+        request = Request(
+            self.url + "?ipAddress=" + quote(str(parse_ip(ip))), headers=headers)
         with urlopen(request, timeout=7) as response:  # noqa: S310 - configured endpoint
             data = json.loads(response.read().decode())
         score = float(data.get("data", {}).get("abuseConfidenceScore", 0))

@@ -6,6 +6,7 @@ import argparse
 import asyncio
 from collections import deque
 import logging
+import os
 import signal
 import threading
 import time
@@ -16,6 +17,8 @@ from .detector import DetectionEngine, LogEvent, PrivilegeEscalationRule, SSHBru
 from .dispatcher import WebhookDispatcher
 from .firewall import FirewallOrchestrator
 from .logger import Health, Metrics, configure_logging, start_metrics_server
+from .privilege import PrivilegeDropError, drop_privileges
+from .rollback import DeadmanSwitch, RollbackCoordinator, resolve_rollback_seconds
 from .tailer import AsyncLogTailer
 from .threat_intel import ThreatIntelClient
 
@@ -38,6 +41,11 @@ class Sentinel:
         self.firewall = FirewallOrchestrator(config.firewall)
         self.threat_intel = ThreatIntelClient(config.threat_intel)
         self.dispatcher = WebhookDispatcher(config.alerting)
+        # Honor ED_BT_ADE_ROLLBACK_SECONDS so the lock-out protection window
+        # is operator-tunable; unset or invalid values fall back to 120s.
+        self.deadman = DeadmanSwitch(config.firewall.state_db.parent,
+                                     resolve_rollback_seconds())
+        self.rollback = RollbackCoordinator(self.firewall)
         self.metrics_server = None
         self.started_at = time.time()
         self.recent_alerts: deque[dict[str, object]] = deque(maxlen=100)
@@ -115,6 +123,10 @@ class Sentinel:
                       asyncio.create_task(self._gc(), name="garbage-collector"),
                       asyncio.create_task(self.firewall.cleanup_loop(self.stop),
                                           name="firewall-cleaner")))
+        # Arm the deadman switch only while the pipeline is actually running:
+        # the external watchdog rolls back bans if this loop ever stops
+        # renewing while bans are still active.
+        self.deadman.start()
         self.health.set_ready(True)
         LOGGER.info("sentinel started", extra={"event": "startup"})
         try:
@@ -126,6 +138,10 @@ class Sentinel:
             self.dispatcher.close()
             await asyncio.gather(*tasks, return_exceptions=True)
             await self.threat_intel.close()
+            # Disarm the watchdog, then roll back every engine-owned ban so a
+            # graceful stop never leaves the host with active DROP rules.
+            await self.deadman.close()
+            await self.rollback.rollback_all_bans()
             self.firewall.close()
             if self.metrics_server:
                 self.metrics_server.shutdown()
@@ -170,9 +186,19 @@ def _install_signals(sentinel: Sentinel) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("-c", "--config", default="config.example.json")
+    parser.add_argument("--no-privilege-drop", action="store_true",
+                        help="skip privilege drop (development hosts only)")
     args = parser.parse_args()
     config = load_config(Path(args.config))
     configure_logging(config.log_level, config.log_file)
+    # Drop root as early as possible: config and log files are open, firewall
+    # nftables/iptables work happens later through CAP_NET_ADMIN (systemd) or
+    # a dedicated setcap wrapper, not through full root.
+    if os.getuid() == 0 and not args.no_privilege_drop:
+        try:
+            drop_privileges()
+        except PrivilegeDropError as exc:
+            parser.error(f"refusing to run as root without privilege separation: {exc}")
     sentinel = Sentinel(config)
     async def runner() -> None:
         _install_signals(sentinel)

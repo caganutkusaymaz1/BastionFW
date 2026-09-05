@@ -1,0 +1,11 @@
+[Unit]
+Description=BastionFW deadman rollback watchdog (must run as root)
+After=multi-user.target
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh /var/lib/bastionfw/rollback-deadman.sh
+# The script is a no-op while the engine keeps renewing its liveness file.
+# It removes only engine-owned ban rules; it never flushes operator rules.
+User=root
+Nice=10

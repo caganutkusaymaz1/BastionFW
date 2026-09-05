@@ -77,6 +77,52 @@ these settings may need to change according to the deployment policy.
 - For false positives, first disable enforcement with `firewall.enabled=false`,
   then adjust rule thresholds and the whitelist.
 
+### 6.1 Deadman Switch (SSH lock-out protection) — REQUIRED for enforcing mode
+
+Before setting `firewall.enabled=true`, install the deadman watchdog. It is an
+independent root-level fail-safe: if the BastionFW process crashes, hangs, or
+stops renewing its liveness file while bans are active, the watchdog removes
+all engine-owned nftables/iptables rules so you can never be locked out of
+your own server.
+
+```bash
+# 1. Provision the standalone watchdog script (idempotent, 0700, root-only):
+sudo python3 -c "
+from pathlib import Path
+from ed_bt_ade.rollback import provision_rollback_script
+provision_rollback_script(
+    Path('/var/lib/bastionfw/rollback-deadman.sh'),
+    Path('/var/lib/bastionfw'),
+    120,
+)
+"
+
+# 2. Install the systemd timer (every minute, as root):
+sudo cp deploy/ed-bt-ade-rollback.service /etc/systemd/system/
+sudo cp deploy/ed-bt-ade-rollback.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now ed-bt-ade-rollback.timer
+```
+
+Behavior:
+
+- The engine renews `/var/lib/bastionfw/deadman.liveness` six times inside
+  the rollback window (default 120 s; override with
+  `ED_BT_ADE_ROLLBACK_SECONDS`, minimum 10 s).
+- If the file's age exceeds the window, the watchdog removes only addresses
+  recorded by the engine (engine-owned nftables set entries and engine-added
+  iptables DROP rules). Whitelisted and operator-managed rules are untouched.
+- Every action is appended to `/var/lib/bastionfw/rollback.log`.
+- A graceful `systemctl stop` also rolls back every active ban from inside
+  the engine (`RollbackCoordinator`), and a dry-run deployment never arms the
+  deadman liveness file with active bans because no bans are ever recorded.
+- If the state database is deleted, the watchdog takes no action — the
+  liveness file is only armed while the engine actually runs.
+
+Test the watchdog in staging by stopping the engine with a manually inserted
+ban row, then confirming `rollback.log` shows the unblock and your SSH session
+stays connected.
+
 ## 7. Distributed Architecture Boundary
 
 This package is a host-local agent. For hundreds of hosts, use one agent per

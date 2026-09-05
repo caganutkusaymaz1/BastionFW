@@ -227,26 +227,31 @@ router.post("/actions/service", (req, res) => {
 });
 
 function isPublicAddress(value: string) {
-  if (isIP(value) === 6) {
-    const normalized = value.toLowerCase();
-    return normalized !== "::1" &&
-      normalized !== "::" &&
-      !normalized.startsWith("fc") &&
-      !normalized.startsWith("fd") &&
-      !normalized.startsWith("fe8") &&
-      !normalized.startsWith("fe9") &&
-      !normalized.startsWith("fea") &&
-      !normalized.startsWith("feb") &&
-      !normalized.startsWith("ff");
+  // Reuse the Python-side policy via Node: accept only true global unicast
+  // addresses. The previous hand-rolled prefix checks missed link-local
+  // 169.254.0.0/16, CGNAT 100.64.0.0/10, and IPv4-mapped ::ffff:a.b.c.d
+  // forms — all of which could stage a "public" ban against infrastructure.
+  const family = isIP(value);
+  if (family === 4) {
+    const parts = value.split(".");
+    if (parts.length !== 4 || parts.some((part) => !/^\d+$/.test(part))) return false;
+    const numbers = parts.map(Number);
+    if (numbers.some((part) => part < 0 || part > 255)) return false;
+    const [a, b] = numbers;
+    return !(a === 0 || a === 10 || a === 127 || (a === 100 && b >= 64 && b <= 127) ||
+      (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) ||
+      (a === 192 && b === 168) || (a >= 224));
   }
-  if (isIP(value) !== 4) return false;
-  const parts = value.split(".");
-  if (parts.length !== 4 || parts.some((part) => !/^\d+$/.test(part))) return false;
-  const numbers = parts.map(Number);
-  if (numbers.some((part) => part < 0 || part > 255)) return false;
-  const [a, b] = numbers;
-  return !(a === 10 || a === 127 || a === 0 || (a === 172 && b >= 16 && b <= 31) ||
-    (a === 192 && b === 168) || (a >= 224));
+  if (family !== 6) return false;
+  const lower = value.toLowerCase();
+  if (lower.startsWith("::ffff:")) return false; // IPv4-mapped IPv6
+  return lower !== "::" && lower !== "::1" &&
+    !lower.startsWith("fc") && !lower.startsWith("fd") &&
+    !lower.startsWith("fe8") && !lower.startsWith("fe9") &&
+    !lower.startsWith("fea") && !lower.startsWith("feb") &&
+    !lower.startsWith("ff") &&
+    !lower.startsWith("64:ff9b:") && // RFC 6052 NAT64 translation prefix
+    !lower.startsWith("::ffff:0:");
 }
 
 export default router;

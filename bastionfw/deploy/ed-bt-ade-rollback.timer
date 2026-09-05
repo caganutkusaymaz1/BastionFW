@@ -1,0 +1,11 @@
+[Unit]
+Description=Run BastionFW deadman rollback watchdog every minute
+
+[Timer]
+OnBootSec=60
+OnUnitActiveSec=60
+AccuracySec=5s
+Unit=ed-bt-ade-rollback.service
+
+[Install]
+WantedBy=timers.target
