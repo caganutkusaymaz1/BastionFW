@@ -1,0 +1,40 @@
+Rol ve Bağlam:
+Sen dünya çapında saygı gören bir Siber Güvenlik Mimarı (Cybersecurity Architect), Principal Python Geliştiricisi ve DevOps Uzmanısın. Sana kaynak kodlarını sunduğum `ed_bt_ade` (Event Detector / Firewall / Threat Intelligence & Dashboard) projesini, piyasadaki ticari WAF/IPS ve Güvenlik Orkestratörlerinden (Cloudflare, F5, CrowdStrike, Splunk SOAR vb.) çok daha üstün, modern, sıfır hatalı (zero-issue) ve tamamen profesyonel bir seviyeye taşımanı istiyorum. 
+
+Hedefim: Bu sistemin kurulumu bir çocuk oyuncağı kadar basit (Plug & Play), mimarisi kurumsal bir bankayı koruyacak kadar güvenli ve stabil, arayüzü ise bir siber güvenlik analistinin tüm ihtiyaçlarını saniyeler içinde karşılayacak kadar modern olmalı.
+
+Lütfen projeyi aşağıdaki 5 ana modül ve katı kurallar çerçevesinde baştan sona refactor et, eksiklikleri gider ve yeni kodları (hiçbir placeholder veya kısaltma kullanmadan) eksiksiz olarak yaz:
+
+1. Kapsamlı ve Gelişmiş Tehdit Algılama Motoru (WAF & IPS Layer)
+Şu anki kural tabanlı yapıyı, endüstri standartlarının ötesine taşıyarak aşağıdaki saldırı türlerini %100 doğrulukla (False-Positive olmadan) algılayan ve anında bloklayan bir sisteme dönüştür:
+* DDoS ve HTTP Flood Koruması: `detector.py` içerisine "Sliding Window" ve "Token Bucket" algoritmalarını entegre et. Sadece IP bazlı değil, User-Agent ve Request-URI bazlı rate-limiting mekanizması kur.
+* SQL Injection (SQLi) Tespiti: Basit regex'lerin ötesine geçerek, HTTP payload'larındaki SQLi girişimlerini (Error-based, Boolean-based, Time-based) algılayacak gelişmiş pattern eşleştirme mantığı yaz.
+* Cross-Site Scripting (XSS): Reflected ve Stored XSS saldırıları için JavaScript enjeksiyon (script, onload, onerror vb.) kalıplarını tespit et.
+* Directory Traversal / Path Traversal: Sunucu dizinlerine erişim girişimlerini (`../../`, `%2e%2e%2f`, `/etc/passwd` vb.) algıla ve URL decode işlemlerinden kaçan saldırıları engelle.
+* Web Shell ve Zararlı Dosya Yükleme (RCE/LFI): Sunucuda komut çalıştırmaya yönelik `eval()`, `base64_decode`, `shell_exec` gibi spesifik web shell imzalarını ve anomali barındıran dosya okuma işlemlerini yakala.
+
+2. Modern, İnteraktif ve Kolaylaştırılmış Kullanıcı Arayüzü (Web Dashboard)
+Mevcut `dashboard.html` ve `dashboard.py` ikilisini modern bir siber güvenlik operasyon merkezi (SOC) arayüzüne dönüştür:
+* UI/UX Tasarımı: Kurulum gerektirmeyen (CDN üzerinden veya lokal) Tailwind CSS veya Bootstrap kullanarak karanlık tema (Dark Mode) destekli, göz yormayan, profesyonel bir arayüz tasarla.
+* Manuel Kontroller (SOC Actions): Arayüze "Manuel IP Engelleme / İzin Verme (Ban/Unban)" formu ekle. Kullanıcı tek tıkla bir IP'yi Firewall üzerinden engelleyebilsin, tehdit istihbaratını manuel tetikleyebilsin ve sistem servislerini (start/stop/restart) arayüzden yönetebilsin.
+* Gerçek Zamanlı Akış: WebSockets (veya Server-Sent Events - SSE) kullanarak logların ve tespit edilen saldırıların sayfayı yenilemeden anlık olarak ekrana akmasını (Live Log Tail) sağla.
+* İstatistik ve Grafikler: Engellenen IP'ler, saldırı türü dağılımları ve trafik yoğunluğunu gösteren modern, anlaşılır grafikler (Chart.js vb.) ekle.
+
+3. Güvenlik Açıklarının Kapatılması ve Sistem Hardening (Zero-Trust)
+Sistemin kendisi bir güvenlik aracı olduğundan, kendi içinde %100 güvenli olmalıdır:
+* Authentication & Authorization: Web paneline şifresiz/güvensiz erişimi tamamen engelle. Sağlam bir Session yönetimi veya JWT tabanlı kimlik doğrulama mekanizması kur. Brute-force saldırılarına karşı panele giriş sınırlaması (Rate limit) ekle.
+* Input Validation: Arayüzden manuel girilen IP adresleri, yapılandırma değişiklikleri ve API istekleri için Strict Validation (Pydantic veya benzeri) uygula. Command Injection veya XSS açıklarına kesinlikle mahal verme.
+* Secret Management: `config.py` içinde hiçbir hassas veriyi düz metin tutma. Çevresel değişken (Environment Variables / .env) kullanımını standartlaştır.
+
+4. Kurumsal Orkestrasyon ve Stabilite (Zero-Issue Architecture)
+Sistemin asla çökmemesi, yüksek CPU/RAM tüketmemesi ve kararlı çalışması gerekiyor:
+* Asenkron Mimari: `dispatcher.py`, `tailer.py` ve `firewall.py` modüllerini `asyncio` kütüphanesi ile tamamen asenkron (non-blocking) hale getir. Saniyede on binlerce log satırı gelse bile sistem darboğaza (bottleneck) girmemeli.
+* Hata Toleransı (Fault Tolerance): Harici bir Threat Intel API'si çöktüğünde veya log dosyası silindiğinde sistem durmamalı. Kapsamlı `try-except` blokları, otomatik yeniden deneme (retry) ve fallback mekanizmaları ekle. "Deadlock" veya "Memory Leak" oluşturabilecek tüm riskleri refactor ederek temizle.
+
+5. Ultra Basit Kurulum ve Entegrasyon (Developer & Ops Experience)
+Bu seviyedeki bir sistemin kurulumu dakikalar değil, saniyeler sürmeli:
+* Single-Command Deployment: Sistemin tüm bağımlılıklarını izole eden mükemmel bir `Dockerfile` ve `docker-compose.yml` yaz. Sadece `docker-compose up -d` komutu ile Web Dashboard, Güvenlik Duvarı entegratörü ve Log takipçisi sorunsuz ayağa kalksın.
+* Otomatik Ortam Yapılandırması: Sistem ilk kez çalıştığında eğer konfigürasyon dosyası yoksa, kullanıcıyı uğraştırmadan varsayılan güvenli `config.json` veya `.env` dosyasını otomatik olarak (Auto-provision) oluştursun.
+
+Beklentim:
+Bana yukarıdaki gereksinimleri karşılayan modülleri, her bir dosyanın kodunu eksiksiz bir şekilde (hiçbir kısmı atlamadan) ve kod içi İngilizce/Türkçe açıklayıcı yorum satırlarıyla birlikte ver. Sadece ne yapılacağını anlatma; doğrudan production-ready, profesyonel Python kodlarını, güncellenmiş HTML yapısını ve Docker dosyalarını üret.

@@ -1,0 +1,23 @@
+services:
+  bastionfw:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: bastionfw
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+      - "9109:9109"
+    environment:
+      ED_BT_ADE_DRY_RUN: "true"
+      ED_BT_ADE_LOG_LEVEL: "INFO"
+    volumes:
+      - bastionfw-state:/var/lib/bastionfw
+      - /var/log:/host/var/log:ro
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  bastionfw-state:

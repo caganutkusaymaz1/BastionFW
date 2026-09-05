@@ -1,0 +1,45 @@
+{
+  "log_sources": [
+    {
+      "name": "staging-auth",
+      "path": "./staging-logs/auth.log",
+      "encoding": "utf-8",
+      "poll_interval": 0.1
+    }
+  ],
+  "queue_size": 10000,
+  "metrics_host": "127.0.0.1",
+  "metrics_port": 19109,
+  "log_level": "DEBUG",
+  "firewall": {
+    "enabled": false,
+    "backend": "dry-run",
+    "state_db": "./state/staging-firewall.sqlite3",
+    "ban_seconds": 3600,
+    "whitelist": []
+  },
+  "threat_intel": {
+    "enabled": false,
+    "cache_db": "./state/staging-threat-intel.sqlite3",
+    "cache_ttl_seconds": 300,
+    "requests_per_second": 1,
+    "circuit_failure_threshold": 3,
+    "circuit_reset_seconds": 30,
+    "abuseipdb_url": ""
+  },
+  "detection": {
+    "ssh_failures": 3,
+    "ssh_window_seconds": 60,
+    "web_score_threshold": 2,
+    "session_ttl_seconds": 600
+  },
+  "alerting": {
+    "webhooks": {
+      "high": [],
+      "critical": []
+    },
+    "batch_size": 10,
+    "flush_interval_seconds": 1,
+    "requests_per_second": 2
+  }
+}

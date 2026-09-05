@@ -1,0 +1,1 @@
+- [OpenAPI integer compatibility](orval-zod-compat.md) — keep generated counters compatible with the workspace’s Zod runtime until generator and Zod are upgraded together.

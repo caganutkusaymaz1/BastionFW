@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bastionfw"
+version = "3.0.0"
+description = "BastionFW defensive log analyzer and active defense engine"
+requires-python = ">=3.11"
+readme = "README.md"
+license = {text = "MIT"}
+authors = [{name = "Çağan Utku Saymaz"}]
+dependencies = []
+
+[project.scripts]
+bastionfw = "ed_bt_ade.sentinel:main"
+ed-bt-ade = "ed_bt_ade.sentinel:main"
+
+[tool.setuptools.packages.find]
+include = ["ed_bt_ade*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

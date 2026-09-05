@@ -3,13 +3,15 @@ info:
   # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: API specification
+  description: BastionFW defensive security operations API
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
     description: Health operations
+  - name: security
+    description: Security operations center data and staged actions
 paths:
   /healthz:
     get:
@@ -24,6 +26,117 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+  /overview:
+    get:
+      operationId: getSecurityOverview
+      tags: [security]
+      summary: Get security operations overview
+      responses:
+        "200":
+          description: Current security posture and dashboard aggregates
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SecurityOverview"
+  /events:
+    get:
+      operationId: listSecurityEvents
+      tags: [security]
+      summary: List recent detections
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: number
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: severity
+          in: query
+          schema:
+            type: string
+            enum: [critical, high, medium, low]
+      responses:
+        "200":
+          description: Recent detection events
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SecurityEvent"
+  /actions/ban:
+    post:
+      operationId: banAddress
+      tags: [security]
+      summary: Stage a manual address ban
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddressAction"
+      responses:
+        "200":
+          description: Address action result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionResult"
+        "400":
+          description: Invalid address
+  /actions/unban:
+    post:
+      operationId: unbanAddress
+      tags: [security]
+      summary: Stage a manual address unban
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddressAction"
+      responses:
+        "200":
+          description: Address action result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionResult"
+        "400":
+          description: Invalid address
+  /actions/threat-intel:
+    post:
+      operationId: refreshThreatIntel
+      tags: [security]
+      summary: Refresh threat intelligence status
+      responses:
+        "200":
+          description: Threat intelligence refresh result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionResult"
+  /actions/service:
+    post:
+      operationId: controlService
+      tags: [security]
+      summary: Request a staged service operation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ServiceAction"
+      responses:
+        "200":
+          description: Service action result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionResult"
+        "400":
+          description: Invalid service action
 components:
   schemas:
     HealthStatus:
@@ -33,4 +146,109 @@ components:
           type: string
       required:
         - status
+    SecurityEvent:
+      type: object
+      required: [id, timestamp, severity, rule, source, ip, evidence, status]
+      properties:
+        id: { type: string }
+        timestamp: { type: string, format: date-time }
+        severity:
+          type: string
+          enum: [critical, high, medium, low]
+        rule: { type: string }
+        source: { type: string }
+        ip: { type: string }
+        evidence: { type: string }
+        status:
+          type: string
+          enum: [blocked, observed, mitigated]
+    AttackCount:
+      type: object
+      required: [label, count, color]
+      properties:
+        label: { type: string }
+        count: { type: number }
+        color: { type: string }
+    TrafficPoint:
+      type: object
+      required: [label, requests, blocked]
+      properties:
+        label: { type: string }
+        requests: { type: number }
+        blocked: { type: number }
+    SecurityOverview:
+      type: object
+      required:
+        [ready, mode, uptimeSeconds, queueDepth, logsProcessed, threatsDetected,
+         ipsBlocked, pipelineErrors, eventsPerMinute, protectedSources,
+         attackCounts, traffic, blockedAddresses, threatIntel, services]
+      properties:
+        ready: { type: boolean }
+        mode:
+          type: string
+          enum: [ENFORCING, DRY-RUN]
+        uptimeSeconds: { type: number }
+        queueDepth: { type: number }
+        logsProcessed: { type: number }
+        threatsDetected: { type: number }
+        ipsBlocked: { type: number }
+        pipelineErrors: { type: number }
+        eventsPerMinute: { type: number }
+        protectedSources: { type: number }
+        attackCounts:
+          type: array
+          items: { $ref: "#/components/schemas/AttackCount" }
+        traffic:
+          type: array
+          items: { $ref: "#/components/schemas/TrafficPoint" }
+        blockedAddresses:
+          type: array
+          items: { type: string }
+        threatIntel:
+          type: object
+          required: [status, lastRefresh, provider]
+          properties:
+            status:
+              type: string
+              enum: [healthy, degraded, disabled]
+            lastRefresh: { type: string, format: date-time }
+            provider: { type: string }
+        services:
+          type: array
+          items:
+            type: object
+            required: [name, state, detail]
+            properties:
+              name: { type: string }
+              state:
+                type: string
+                enum: [running, stopped, degraded]
+              detail: { type: string }
+    AddressAction:
+      type: object
+      required: [ip]
+      properties:
+        ip:
+          type: string
+          minLength: 7
+          maxLength: 45
+    ServiceAction:
+      type: object
+      required: [service, action]
+      properties:
+        service:
+          type: string
+          enum: [sentinel, firewall, threat-intel]
+        action:
+          type: string
+          enum: [start, stop, restart]
+    ActionResult:
+      type: object
+      required: [ok, message, mode]
+      properties:
+        ok: { type: boolean }
+        message: { type: string }
+        mode:
+          type: string
+          enum: [ENFORCING, DRY-RUN]
 

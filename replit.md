@@ -1,6 +1,6 @@
-# [Project name]
+# BastionFW Security Platform
 
-_Replace the heading above with the project's name, and this line with one sentence describing what this app does for users._
+BastionFW is a dry-run-first security operations console for reviewing detections and staging policy-aware defensive actions.
 
 ## Run & Operate
 
@@ -22,15 +22,22 @@ _Replace the heading above with the project's name, and this line with one sente
 
 ## Where things live
 
-_Populate as you build — short repo map plus pointers to the source-of-truth file for DB schema, API contracts, theme files, etc._
+- `artifacts/bastionfw-console` — authenticated React/Vite SOC dashboard.
+- `artifacts/api-server/src/routes/security.ts` — protected overview, events, and staged SOC actions.
+- `artifacts/api-server/src/security/detector.ts` — reusable payload normalization, threat signatures, and rate limit primitives.
+- `lib/api-spec/openapi.yaml` — source of truth for the generated client and Zod contracts.
+- `artifacts/api-server/src/middlewares/requireAuth.ts` — Clerk-backed API guard.
 
 ## Architecture decisions
 
-_Populate as you build — non-obvious choices a reader couldn't infer from the code (3-5 bullets)._
+- Enforcement remains dry-run by default; service and address controls stage state changes rather than executing host shell commands.
+- Dashboard data is contract-first through OpenAPI-generated hooks and refreshes telemetry on a finite interval.
+- Clerk provides browser session auth; protected API routes rely on the same-origin session cookie rather than custom bearer-token handling.
+- Threat detection normalizes repeated URL encoding before matching and keeps IP/UA/URI rate limiting primitives bounded in memory.
 
 ## Product
 
-_Describe the high-level user-facing capabilities of this app once they exist._
+The console gives analysts a live protection posture, event stream, traffic and attack breakdowns, manual ban/unban controls, threat-intelligence refresh, and staged service controls.
 
 ## User preferences
 
@@ -38,7 +45,9 @@ _Populate as you build — explicit user instructions worth remembering across s
 
 ## Gotchas
 
-_Populate as you build — sharp edges, "always run X before Y" rules._
+- Use `pnpm --filter @workspace/api-spec run codegen` after changing `lib/api-spec/openapi.yaml`.
+- Protected SOC endpoints intentionally return `401` until a Clerk session is established.
+- Build the web artifact with workflow-provided `PORT` and `BASE_PATH` values.
 
 ## Pointers
 
