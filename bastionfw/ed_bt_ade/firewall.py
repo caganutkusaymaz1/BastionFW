@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import ipaddress
 import logging
 import shutil
 from abc import ABC, abstractmethod
@@ -13,6 +12,7 @@ import time
 from typing import Callable, Sequence
 
 from .config import FirewallConfig
+from .validation import parse_ip, parse_network
 
 LOGGER = logging.getLogger(__name__)
 
@@ -177,27 +177,27 @@ class FirewallOrchestrator:
 
     def _allowed(self, value: str) -> bool:
         try:
-            network = ipaddress.ip_network(value, strict=False)
+            network = parse_ip(value)
         except ValueError:
             return False
         if network.version != 4 or not network.is_global:
             return False
         forbidden = (
-            ipaddress.ip_network("127.0.0.0/8"),
-            ipaddress.ip_network("10.0.0.0/8"),
-            ipaddress.ip_network("172.16.0.0/12"),
-            ipaddress.ip_network("192.168.0.0/16"),
-            ipaddress.ip_network("169.254.0.0/16"),
+            parse_network("127.0.0.0/8"),
+            parse_network("10.0.0.0/8"),
+            parse_network("172.16.0.0/12"),
+            parse_network("192.168.0.0/16"),
+            parse_network("169.254.0.0/16"),
         )
-        if any(network.subnet_of(item) or item.subnet_of(network) for item in forbidden):
+        if any(network in item for item in forbidden):
             return False
-        return not any(network.overlaps(ipaddress.ip_network(item, strict=False))
+        return not any(network in parse_network(item)
                        for item in self.config.whitelist)
 
     async def block(self, value: str, duration: int | None = None) -> bool:
         """Block a single public IPv4 address; return whether a new ban was added."""
         try:
-            address = str(ipaddress.ip_address(value))
+            address = str(parse_ip(value))
         except ValueError:
             LOGGER.warning("invalid block address", extra={"ip": value})
             return False

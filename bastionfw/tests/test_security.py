@@ -7,6 +7,7 @@ from ed_bt_ade.config import load_config
 from ed_bt_ade.detector import DetectionEngine, LogEvent, WebAttackRule
 from ed_bt_ade.logger import configure_logging
 from ed_bt_ade.parsing import extract_remote_ip, normalize_request_data
+from ed_bt_ade.validation import ValidationError, parse_ip, parse_network, parse_port, parse_protocol
 
 
 class SecurityRegressionTests(unittest.TestCase):
@@ -52,6 +53,18 @@ class SecurityRegressionTests(unittest.TestCase):
             self.assertEqual(config.trusted_proxies, ("192.0.2.0/24",))
             configure_logging(config.log_level, config.log_file)
             self.assertTrue(config.log_file.exists())
+
+    def test_network_validation_rejects_noncanonical_or_invalid_values(self) -> None:
+        self.assertEqual(str(parse_ip("2001:db8::1")), "2001:db8::1")
+        self.assertEqual(str(parse_network("192.0.2.0/24")), "192.0.2.0/24")
+        self.assertEqual(parse_port("443"), 443)
+        self.assertEqual(parse_protocol("TCP"), "tcp")
+        for value in ("192.0.2.1/24", "192.0.2.999", "0", "65536"):
+            with self.assertRaises(ValidationError):
+                (parse_network(value) if "/" in value else
+                 parse_port(value) if value.isdigit() else parse_ip(value))
+        with self.assertRaises(ValidationError):
+            parse_protocol("esp")
 
 
 if __name__ == "__main__":

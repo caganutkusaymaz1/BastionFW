@@ -7,7 +7,6 @@ supported when PyYAML is installed; JSON is always supported.
 from __future__ import annotations
 
 import json
-import ipaddress
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -18,6 +17,8 @@ try:
     from dotenv import load_dotenv
 except ImportError:  # pragma: no cover - dependency is installed in packaged deployments
     load_dotenv = None
+
+from .validation import ValidationError, parse_network
 
 
 class ConfigError(ValueError):
@@ -235,8 +236,8 @@ def load_config(path: str | Path, environ: dict[str, str] | None = None) -> AppC
     trusted_proxies: list[str] = []
     for item in raw_proxies:
         try:
-            network = ipaddress.ip_network(item, strict=False)
-        except ValueError as exc:
+            network = parse_network(item)
+        except ValidationError as exc:
             raise ConfigError(f"invalid trusted proxy network: {item}") from exc
         trusted_proxies.append(str(network))
 
@@ -249,8 +250,8 @@ def load_config(path: str | Path, environ: dict[str, str] | None = None) -> AppC
         raise ConfigError("firewall.whitelist must be a list of strings")
     for item in whitelist:
         try:
-            network = ipaddress.ip_network(item, strict=False)
-        except ValueError as exc:
+            network = parse_network(item, version=4)
+        except ValidationError as exc:
             raise ConfigError(f"invalid firewall whitelist CIDR: {item}") from exc
         if network.version != 4:
             raise ConfigError("firewall whitelist supports IPv4 CIDRs only")
