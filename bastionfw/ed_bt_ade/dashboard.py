@@ -63,7 +63,7 @@ def start_dashboard_server(host: str, port: int, sentinel: Sentinel) -> Threadin
 
 async def run_dashboard(config_path: Path, host: str, port: int) -> None:
     config = load_config(config_path)
-    configure_logging(config.log_level)
+    configure_logging(config.log_level, config.log_file)
     sentinel = Sentinel(config)
     server = start_dashboard_server(host, port, sentinel)
     _install_signals(sentinel)

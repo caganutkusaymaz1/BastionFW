@@ -8,7 +8,28 @@ import re
 import time
 from typing import Iterable, Protocol
 
+try:
+    import regex as safe_regex
+except ImportError:  # pragma: no cover - exercised only in minimal environments
+    safe_regex = None
+
 from .parsing import extract_remote_ip, normalize_for_detection
+
+REGEX_TIMEOUT_SECONDS = 0.05
+
+
+def _compile(pattern: str, flags: int = 0):
+    return (safe_regex.compile(pattern, flags)
+            if safe_regex is not None else re.compile(pattern, flags))
+
+
+def _search(pattern: object, value: str) -> bool:
+    try:
+        if safe_regex is not None:
+            return pattern.search(value, timeout=REGEX_TIMEOUT_SECONDS) is not None  # type: ignore[attr-defined]
+        return pattern.search(value) is not None  # type: ignore[attr-defined]
+    except TimeoutError:
+        return False
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,7 +58,7 @@ class DetectionRule(Protocol):
 
 
 class SSHBruteForceRule:
-    _failed = re.compile(r"(?:failed password|authentication failure|invalid user)", re.I)
+    _failed = _compile(r"(?:failed password|authentication failure|invalid user)", re.I)
 
     def __init__(self, threshold: int, window: float) -> None:
         self.threshold = threshold
@@ -45,7 +66,7 @@ class SSHBruteForceRule:
         self.attempts: defaultdict[str, deque[float]] = defaultdict(deque)
 
     def evaluate(self, event: LogEvent) -> Iterable[Detection]:
-        if not self._failed.search(event.line):
+        if not _search(self._failed, event.line[:65536]):
             return ()
         ip = event.remote_ip or extract_remote_ip(event.line)
         if not ip:
@@ -72,34 +93,34 @@ class SSHBruteForceRule:
 
 class WebAttackRule:
     _patterns = {
-        "sqli": re.compile(
+        "sqli": _compile(
             r"(?:union\s+(?:all\s+)?select|select\s+.+\s+from|"
             r"(?:or|and)\s+['\"]?\d+['\"]?\s*=\s*['\"]?\d+|"
             r"sleep\s*\(|benchmark\s*\(|waitfor\s+delay|"
             r"sql\s+syntax|mysql_fetch|unclosed\s+quotation)",
             re.I,
         ),
-        "xss": re.compile(
+        "xss": _compile(
             r"(?:<script|javascript:|data:text/html|on(?:error|load|mouseover)\s*=|"
             r"<svg|expression\s*\()",
             re.I,
         ),
-        "rfi": re.compile(r"(?:https?://|ftp://|php://|data://).*(?:include|require)", re.I),
-        "lfi_path_traversal": re.compile(
+        "rfi": _compile(r"(?:https?://|ftp://|php://|data://)[^\r\n]{0,2048}(?:include|require)", re.I),
+        "lfi_path_traversal": _compile(
             r"(?:\.\./|\.\.\\|%2e%2e|%252e|/etc/passwd|/proc/self/environ|"
             r"(?:boot|win)\.ini|\x00)",
             re.I,
         ),
-        "web_shell": re.compile(
+        "web_shell": _compile(
             r"(?:\beval\s*\(|\bassert\s*\(|\bsystem\s*\(|\bshell_exec\s*\(|"
             r"\bpassthru\s*\(|\bbase64_decode\s*\()",
             re.I,
         ),
-        "command_injection": re.compile(
+        "command_injection": _compile(
             r"(?:[;&|]\s*(?:id|whoami|uname|cat|curl|wget|nc)\b|\$\([^)]{1,120}\))",
             re.I,
         ),
-        "request_smuggling": re.compile(r"(?:transfer-encoding\s*:.*content-length|content-length\s*:.*transfer-encoding)", re.I),
+        "request_smuggling": _compile(r"(?:transfer-encoding\s*:\s*[^\r\n]{0,2048}content-length|content-length\s*:\s*[^\r\n]{0,2048}transfer-encoding)", re.I),
     }
 
     def __init__(self, threshold: int = 1) -> None:
@@ -110,7 +131,7 @@ class WebAttackRule:
             " ".join(part for part in (event.line, event.user_agent, event.request_uri) if part)
         )
         matches = [name for name, pattern in self._patterns.items()
-                   if pattern.search(line)]
+                   if _search(pattern, line)]
         if len(matches) < self.threshold:
             return ()
         return (Detection("web_attack", "high", event.source,
@@ -192,12 +213,12 @@ class WebRateLimitRule:
 
 
 class PrivilegeEscalationRule:
-    _pattern = re.compile(
+    _pattern = _compile(
         r"(?:sudo:.*COMMAND|session opened for user root|(?:modified|opened).*/etc/(?:passwd|sudoers)|"
         r"new cron|crontab|su:.*session opened)", re.I)
 
     def evaluate(self, event: LogEvent) -> Iterable[Detection]:
-        if self._pattern.search(event.line):
+        if _search(self._pattern, event.line[:65536]):
             return (Detection("privilege_escalation_anomaly", "medium", event.source,
                               event.remote_ip or extract_remote_ip(event.line),
                               event.line[:300]),)

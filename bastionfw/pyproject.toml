@@ -10,7 +10,10 @@ requires-python = ">=3.11"
 readme = "README.md"
 license = {text = "MIT"}
 authors = [{name = "Cagan Utku Saymaz"}]
-dependencies = []
+dependencies = [
+	"python-dotenv>=1.0.1",
+	"regex>=2024.11.6",
+]
 
 [project.scripts]
 bastionfw = "ed_bt_ade.sentinel:main"

@@ -96,9 +96,8 @@ class ReputationCache:
             if item and time.time() - item.fetched_at < self.ttl:
                 self.memory.move_to_end(ip)
                 return item
-            row = self.db.execute(
-                "SELECT ip, score, source, fetched_at FROM reputation WHERE ip = ?", (ip,)
-            ).fetchone()
+            row = await asyncio.to_thread(
+                self._get_row, ip)
             if row and time.time() - row[3] < self.ttl:
                 item = Reputation(*row)
                 self.memory[ip] = item
@@ -112,9 +111,17 @@ class ReputationCache:
             self.memory[item.ip] = item
             self.memory.move_to_end(item.ip)
             self._trim()
-            self.db.execute("INSERT OR REPLACE INTO reputation VALUES (?, ?, ?, ?)",
-                            (item.ip, item.score, item.source, item.fetched_at))
-            self.db.commit()
+            await asyncio.to_thread(self._put_row, item)
+
+    def _get_row(self, ip: str) -> tuple[object, ...] | None:
+        return self.db.execute(
+            "SELECT ip, score, source, fetched_at FROM reputation WHERE ip = ?", (ip,)
+        ).fetchone()
+
+    def _put_row(self, item: Reputation) -> None:
+        self.db.execute("INSERT OR REPLACE INTO reputation VALUES (?, ?, ?, ?)",
+                        (item.ip, item.score, item.source, item.fetched_at))
+        self.db.commit()
 
     def _trim(self) -> None:
         while len(self.memory) > self.max_entries:
@@ -123,11 +130,14 @@ class ReputationCache:
     async def purge(self) -> None:
         async with self.lock:
             cutoff = time.time() - self.ttl
-            self.db.execute("DELETE FROM reputation WHERE fetched_at < ?", (cutoff,))
-            self.db.commit()
+            await asyncio.to_thread(self._purge_rows, cutoff)
             for ip, item in list(self.memory.items()):
                 if item.fetched_at < cutoff:
                     del self.memory[ip]
+
+    def _purge_rows(self, cutoff: float) -> None:
+        self.db.execute("DELETE FROM reputation WHERE fetched_at < ?", (cutoff,))
+        self.db.commit()
 
     def close(self) -> None:
         self.db.close()

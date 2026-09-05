@@ -106,7 +106,8 @@ class Sentinel:
     async def run(self) -> None:
         self.metrics_server = start_metrics_server(
             self.config.metrics_host, self.config.metrics_port, self.metrics, self.health)
-        tailers = [AsyncLogTailer(source, self.queue) for source in self.config.log_sources]
+        tailers = [AsyncLogTailer(source, self.queue, self.config.trusted_proxies)
+               for source in self.config.log_sources]
         tasks = [asyncio.create_task(tailer.run(), name=f"tailer:{tailer.source.name}")
                  for tailer in tailers]
         tasks.extend((asyncio.create_task(self._process(), name="processor"),
@@ -171,7 +172,7 @@ def main() -> None:
     parser.add_argument("-c", "--config", default="config.example.json")
     args = parser.parse_args()
     config = load_config(Path(args.config))
-    configure_logging(config.log_level)
+    configure_logging(config.log_level, config.log_file)
     sentinel = Sentinel(config)
     async def runner() -> None:
         _install_signals(sentinel)

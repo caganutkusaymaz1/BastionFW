@@ -17,6 +17,8 @@
   "metrics_host": "127.0.0.1",
   "metrics_port": 9109,
   "log_level": "INFO",
+  "log_file": "state/bastionfw.log",
+  "trusted_proxies": [],
   "firewall": {
     "enabled": false,
     "backend": "dry-run",

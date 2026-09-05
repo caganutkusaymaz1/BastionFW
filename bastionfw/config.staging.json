@@ -11,6 +11,8 @@
   "metrics_host": "127.0.0.1",
   "metrics_port": 19109,
   "log_level": "DEBUG",
+  "log_file": "state/staging-bastionfw.log",
+  "trusted_proxies": [],
   "firewall": {
     "enabled": false,
     "backend": "dry-run",

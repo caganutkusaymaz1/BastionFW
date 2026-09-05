@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import logging
+from logging.handlers import RotatingFileHandler
+from pathlib import Path
 import threading
 import time
 from collections import defaultdict
@@ -27,12 +29,23 @@ class JsonFormatter(logging.Formatter):
         return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
 
 
-def configure_logging(level: str = "INFO") -> None:
-    handler = logging.StreamHandler()
-    handler.setFormatter(JsonFormatter())
+def configure_logging(level: str = "INFO", log_file: Path | None = None) -> None:
+    formatter = JsonFormatter()
+    handlers: list[logging.Handler] = [logging.StreamHandler()]
+    if log_file is not None:
+        try:
+            log_file.parent.mkdir(parents=True, exist_ok=True)
+            handlers.append(RotatingFileHandler(
+                log_file, maxBytes=10 * 1024 * 1024, backupCount=5,
+                encoding="utf-8"))
+        except OSError:
+            logging.getLogger(__name__).exception("rotating log file unavailable")
+    for handler in handlers:
+        handler.setFormatter(formatter)
     root = logging.getLogger()
     root.handlers.clear()
-    root.addHandler(handler)
+    for handler in handlers:
+        root.addHandler(handler)
     root.setLevel(level.upper())
 
 

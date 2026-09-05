@@ -28,13 +28,15 @@ class AsyncLogTailer:
     covering rename-based rotation and copytruncate-based rotation.
     """
 
-    def __init__(self, source: LogSource, output: asyncio.Queue[LogEvent]) -> None:
+    def __init__(self, source: LogSource, output: asyncio.Queue[LogEvent],
+                 trusted_proxies: tuple[str, ...] = ()) -> None:
         self.source = source
         self.output = output
         self.state = TailState()
         self._buffer = b""
         self._handle: BinaryIO | None = None
         self.stop = asyncio.Event()
+        self.trusted_proxies = trusted_proxies
 
     async def run(self) -> None:
         while not self.stop.is_set():
@@ -91,13 +93,15 @@ class AsyncLogTailer:
         for raw_line in parts:
             line = raw_line.rstrip(b"\r").decode(self.source.encoding, errors="replace")
             await self.output.put(LogEvent(self.source.name, line,
-                                           remote_ip=extract_remote_ip(line)))
+                                           remote_ip=extract_remote_ip(
+                                               line, self.trusted_proxies)))
 
     async def _flush_partial(self) -> None:
         if self._buffer:
             line = self._buffer.decode(self.source.encoding, errors="replace")
             await self.output.put(LogEvent(self.source.name, line,
-                                           remote_ip=extract_remote_ip(line)))
+                                           remote_ip=extract_remote_ip(
+                                               line, self.trusted_proxies)))
             self._buffer = b""
 
     def close(self) -> None:

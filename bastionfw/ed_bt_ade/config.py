@@ -14,6 +14,11 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+try:
+    from dotenv import load_dotenv
+except ImportError:  # pragma: no cover - dependency is installed in packaged deployments
+    load_dotenv = None
+
 
 class ConfigError(ValueError):
     """Raised when configuration is missing or invalid."""
@@ -76,6 +81,8 @@ class AppConfig:
     metrics_host: str = "127.0.0.1"
     metrics_port: int = 9109
     log_level: str = "INFO"
+    trusted_proxies: tuple[str, ...] = ()
+    log_file: Path | None = None
 
 
 def _as_bool(value: Any, key: str) -> bool:
@@ -148,6 +155,8 @@ def provision_default_config(path: str | Path) -> Path:
         "metrics_host": "127.0.0.1",
         "metrics_port": 9109,
         "log_level": "INFO",
+        "log_file": "state/bastionfw.log",
+        "trusted_proxies": [],
         "firewall": {
             "enabled": False,
             "backend": "dry-run",
@@ -196,6 +205,8 @@ def load_config(path: str | Path, environ: dict[str, str] | None = None) -> AppC
     ``ED_BT_ADE_DRY_RUN`` maps to ``firewall.enabled`` (false means dry-run),
     and ``ED_BT_ADE_LOG_LEVEL`` maps to the logging level.
     """
+    if load_dotenv is not None:
+        load_dotenv(override=False)
     source = _load_document(provision_default_config(path))
     raw_sources = source.get("log_sources")
     if not isinstance(raw_sources, list) or not raw_sources:
@@ -216,6 +227,18 @@ def load_config(path: str | Path, environ: dict[str, str] | None = None) -> AppC
                       encoding=str(item.get("encoding", "utf-8")),
                       poll_interval=poll)
         )
+
+    raw_proxies = source.get("trusted_proxies", [])
+    if not isinstance(raw_proxies, list) or not all(
+            isinstance(item, str) and item.strip() for item in raw_proxies):
+        raise ConfigError("trusted_proxies must be a list of IP addresses or CIDRs")
+    trusted_proxies: list[str] = []
+    for item in raw_proxies:
+        try:
+            network = ipaddress.ip_network(item, strict=False)
+        except ValueError as exc:
+            raise ConfigError(f"invalid trusted proxy network: {item}") from exc
+        trusted_proxies.append(str(network))
 
     firewall_raw = _mapping(source.get("firewall", {}), "firewall")
     backend = str(firewall_raw.get("backend", "auto")).lower()
@@ -302,6 +325,8 @@ def load_config(path: str | Path, environ: dict[str, str] | None = None) -> AppC
     port = _positive(source.get("metrics_port", 9109), "metrics_port", integer=True)
     if port > 65_535:
         raise ConfigError("metrics_port must be <= 65535")
+    raw_log_file = source.get("log_file")
+    log_file = Path(raw_log_file) if isinstance(raw_log_file, str) and raw_log_file else None
     return AppConfig(
         log_sources=tuple(sources),
         firewall=FirewallConfig(enabled=enabled, backend=firewall.backend,
@@ -315,4 +340,6 @@ def load_config(path: str | Path, environ: dict[str, str] | None = None) -> AppC
         metrics_host=str(source.get("metrics_host", "127.0.0.1")),
         metrics_port=port,
         log_level=level,
+        trusted_proxies=tuple(trusted_proxies),
+        log_file=log_file,
     )
