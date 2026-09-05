@@ -138,7 +138,7 @@ class Sentinel:
             alerts = list(self.recent_alerts)
         return {
             "project": "BastionFW",
-            "developer": "Çağan Utku Saymaz",
+            "developer": "Cagan Utku Saymaz",
             "ready": self.health.ready,
             "mode": "ENFORCING" if self.config.firewall.enabled else "DRY-RUN",
             "uptime_seconds": max(0, int(time.time() - self.started_at)),

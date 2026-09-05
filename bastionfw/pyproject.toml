@@ -9,7 +9,7 @@ description = "BastionFW defensive log analyzer and active defense engine"
 requires-python = ">=3.11"
 readme = "README.md"
 license = {text = "MIT"}
-authors = [{name = "Çağan Utku Saymaz"}]
+authors = [{name = "Cagan Utku Saymaz"}]
 dependencies = []
 
 [project.scripts]

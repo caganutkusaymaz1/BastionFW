@@ -21,6 +21,10 @@ class FirewallError(RuntimeError):
     """A firewall operation could not be completed."""
 
 
+class FirewallUnavailable(FirewallError):
+    """The selected firewall is unavailable in the current environment."""
+
+
 class FirewallDriver(ABC):
     @abstractmethod
     async def block(self, address: str) -> None:
@@ -29,6 +33,16 @@ class FirewallDriver(ABC):
     @abstractmethod
     async def unblock(self, address: str) -> None:
         raise NotImplementedError
+
+
+class MockFirewallDriver(FirewallDriver):
+    """No-op driver for development hosts without firewall privileges."""
+
+    async def block(self, address: str) -> None:
+        LOGGER.info("firewall mock block", extra={"event": "firewall_mock", "ip": address})
+
+    async def unblock(self, address: str) -> None:
+        LOGGER.info("firewall mock unblock", extra={"event": "firewall_mock", "ip": address})
 
 
 class CommandFirewallDriver(FirewallDriver):
@@ -49,12 +63,22 @@ class CommandFirewallDriver(FirewallDriver):
         if not self.enabled:
             LOGGER.warning("firewall dry-run", extra={"event": "firewall_dry_run"})
             return
-        process = await asyncio.create_subprocess_exec(
-            self.executable, *args, stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE)
+        try:
+            process = await asyncio.create_subprocess_exec(
+                self.executable, *args, stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE)
+        except FileNotFoundError as exc:
+            raise FirewallUnavailable(
+                f"firewall executable not found: {self.executable}") from exc
+        except PermissionError as exc:
+            raise FirewallUnavailable(
+                f"firewall executable is not permitted: {self.executable}") from exc
         _stdout, stderr = await process.communicate()
         if process.returncode != 0:
-            raise FirewallError(stderr.decode(errors="replace").strip())
+            message = stderr.decode(errors="replace").strip()
+            if process.returncode in {1, 126, 127} or "permission denied" in message.lower():
+                raise FirewallUnavailable(message or "firewall command is unavailable")
+            raise FirewallError(message or "firewall command failed")
 
     async def block(self, address: str) -> None:
         args = self.block_builder(address) if self.block_builder else [*self.block_args, address]
@@ -105,7 +129,7 @@ class FirewalldDriver(CommandFirewallDriver):
 
 def detect_driver(config: FirewallConfig) -> FirewallDriver:
     if config.backend == "dry-run":
-        return CommandFirewallDriver("true", (), (), False)
+        return MockFirewallDriver()
     candidates = {
         "nftables": ("nft", NftablesDriver),
         "iptables": ("iptables", IptablesDriver),
@@ -115,13 +139,15 @@ def detect_driver(config: FirewallConfig) -> FirewallDriver:
     if config.backend != "auto":
         executable, factory = candidates[config.backend]
         if not shutil.which(executable):
-            raise FirewallError(f"configured firewall executable not found: {executable}")
+            LOGGER.warning("configured firewall unavailable; using mock driver",
+                           extra={"event": "firewall_fallback", "executable": executable})
+            return MockFirewallDriver()
         return factory(config.enabled)
     for executable, factory in candidates.values():
         if shutil.which(executable):
             return factory(config.enabled)
     LOGGER.warning("no firewall executable found; using dry-run driver")
-    return CommandFirewallDriver("true", (), (), False)
+    return MockFirewallDriver()
 
 
 class FirewallOrchestrator:
@@ -154,7 +180,7 @@ class FirewallOrchestrator:
             network = ipaddress.ip_network(value, strict=False)
         except ValueError:
             return False
-        if network.version != 4:
+        if network.version != 4 or not network.is_global:
             return False
         forbidden = (
             ipaddress.ip_network("127.0.0.0/8"),
@@ -181,8 +207,16 @@ class FirewallOrchestrator:
         async with self._lock:
             if address in self._blocked:
                 return False
-            await self.driver.block(address)
-            expires = time.time() + (duration or self.config.ban_seconds)
+            if duration is not None and duration <= 0:
+                raise ValueError("duration must be greater than zero")
+            try:
+                await self.driver.block(address)
+            except FirewallUnavailable as exc:
+                LOGGER.warning("firewall unavailable; switching to mock driver",
+                               extra={"event": "firewall_fallback", "reason": str(exc)})
+                self.driver = MockFirewallDriver()
+                return False
+            expires = time.time() + (duration if duration is not None else self.config.ban_seconds)
             self._db.execute("INSERT OR REPLACE INTO bans VALUES (?, ?)", (address, expires))
             self._db.commit()
             self._blocked.add(address)

@@ -1,10 +1,10 @@
-# BastionFW Operasyon Rehberi
+# BastionFW Operations Guide
 
-**Geliştirici:** Çağan Utku Saymaz
+**Developer:** Cagan Utku Saymaz
 
-## 1. Kurulum
+## 1. Installation
 
-Python 3.11 veya daha yeni bir Linux host gerekir. Paket bağımlılığı yoktur.
+Python 3.11 or newer is required on a Linux host. There are no package dependencies.
 
 ```bash
 python3 -m venv .venv
@@ -13,10 +13,10 @@ python -m pip install --upgrade pip
 python -m unittest discover -s tests -v
 ```
 
-Servis hesabının okuyacağı log dosyalarına erişimi olmalıdır. State dizini
-yalnızca servis hesabı tarafından yazılabilir olmalıdır.
+The service account must be able to read the configured log files. The state
+directory must be writable only by the service account.
 
-## 2. İlk çalıştırma: staging/dry-run
+## 2. First Run: Staging/Dry-Run
 
 ```bash
 mkdir -p staging-logs state
@@ -24,7 +24,7 @@ mkdir -p staging-logs state
 python -m ed_bt_ade.sentinel --config config.staging.json
 ```
 
-Başka bir terminalde test olayları üretilebilir:
+Generate test events from another terminal:
 
 ```bash
 for n in 1 2 3; do
@@ -34,55 +34,53 @@ curl -fsS http://127.0.0.1:19109/healthz
 curl -fsS http://127.0.0.1:19109/metrics
 ```
 
-`203.0.113.0/24` dokümantasyon için ayrılmış bir ağdır; gerçek saldırı
-trafiğini taklit etmek yerine staging testlerinde kullanılmalıdır.
+`203.0.113.0/24` is reserved for documentation and should be used for staging
+tests instead of simulating traffic from real attackers.
 
-## 3. Gerçek firewall etkinleştirme sırası
+## 3. Production Firewall Enablement
 
-1. Önce en az 24 saat dry-run metriklerini ve tespit oranlarını gözlemleyin.
-2. Yönetim IP'lerini ve yönetim CIDR'larını whitelist'e ekleyin.
-3. `backend` değerini hostta gerçekten kullanılan sürücüye sabitleyin.
-4. Firewall'ın mevcut ruleset/set yapısını manuel olarak doğrulayın.
-5. Kısa `ban_seconds` değeriyle sınırlı staging denemesi yapın.
-6. Ancak bundan sonra `firewall.enabled=true` yapın.
+1. Observe dry-run metrics and detection rates for at least 24 hours.
+2. Add management IP addresses and CIDRs to the whitelist.
+3. Pin `backend` to a driver actually available on the host.
+4. Manually verify the firewall's existing ruleset or set structure.
+5. Run a limited staging test with a short `ban_seconds` value.
+6. Only then set `firewall.enabled=true`.
 
-Loopback, RFC1918, link-local ve whitelist adresleri kod seviyesinde reddedilir.
-Buna rağmen whitelist, ağ erişim politikasının yerine geçmez; host firewall
-kuralları ve out-of-band erişim ayrıca doğrulanmalıdır.
+Loopback, RFC1918, link-local, reserved, and whitelisted addresses are rejected
+at the code level. The whitelist is not a replacement for network access policy;
+host firewall rules and out-of-band access must also be verified.
 
-## 4. Threat intelligence ve webhooklar
+## 4. Threat Intelligence and Webhooks
 
-Threat intelligence varsayılan olarak kapalıdır. Sağlayıcı URL'si
-`threat_intel.abuseipdb_url` üzerinden yapılandırılır. API anahtarlarını
-konfigürasyon dosyasına yazmayın. AbuseIPDB için anahtar
-`ED_BT_ADE_ABUSEIPDB_KEY` environment/secret değişkeninden okunur; üretimde
-secret yönetimi kullanın.
+Threat intelligence is disabled by default. Configure the provider URL through
+`threat_intel.abuseipdb_url`. Do not write API keys to configuration files.
+Use a secret manager for provider credentials in production.
 
-Webhook URL'leri `alerting.webhooks` altında severity seviyesine göre gruplanır.
-Dispatcher batch gönderir, rate limit uygular ve dış servis hatalarını ana
-ingestion pipeline'ına taşımaz.
+Webhook URLs are grouped by severity under `alerting.webhooks`. The dispatcher
+sends batches, applies rate limiting, and keeps external-service failures out of
+the main ingestion pipeline.
 
 ## 5. systemd
 
-`deploy/ed-bt-ade.service` örneğini host yollarına göre düzenleyin. Servis
-hesabı, log okuma izinleri, state dizini ve gerekli firewall yetkileri tek tek
-incelenmelidir. `NoNewPrivileges` ile `CAP_NET_ADMIN` birlikte kullanıldığı
-için dağıtım politikanıza göre bunlardan biri değiştirilebilir.
+Adapt `deploy/ed-bt-ade.service` to the host paths. Review the service account,
+log read permissions, state directory, and required firewall capabilities
+individually. Because `NoNewPrivileges` is used with `CAP_NET_ADMIN`, one of
+these settings may need to change according to the deployment policy.
 
-## 6. İzleme ve geri dönüş
+## 6. Monitoring and Rollback
 
-- `/healthz`: servis hazırsa HTTP 200 döner.
-- `/metrics`: işlenen log, tespit, engelleme, hata ve son pipeline gecikmesini
-  Prometheus metin formatında verir.
-- JSON loglar stdout'a yazılır; journald veya merkezi log collector'a
-  yönlendirilebilir.
-- Yanlış pozitiflerde önce `firewall.enabled=false` ile enforcement'ı kapatın,
-  sonra kural eşiklerini ve whitelist'i düzeltin.
+- `/healthz`: returns HTTP 200 when the service is ready.
+- `/metrics`: exposes processed logs, detections, blocks, errors, and latest
+  pipeline latency in Prometheus text format.
+- JSON logs are written to stdout and can be routed to journald or a central
+  log collector.
+- For false positives, first disable enforcement with `firewall.enabled=false`,
+  then adjust rule thresholds and the whitelist.
 
-## 7. Dağıtık mimari sınırı
+## 7. Distributed Architecture Boundary
 
-Bu paket host-local agent'tır. Yüzlerce host için her hostta bir agent,
-merkezi event bus, merkezi politika/config dağıtımı, mTLS kimlikleri,
-merkezi deduplikasyon ve fleet-level audit katmanı gerekir. SQLite yalnızca
-host-local ban ve reputation cache state'i içindir; merkezi koordinasyon
-amacıyla kullanılmamalıdır.
+This package is a host-local agent. For hundreds of hosts, use one agent per
+host with a central event bus, centralized policy/configuration distribution,
+mTLS identities, centralized deduplication, and fleet-level auditing. SQLite is
+only for host-local ban and reputation-cache state; it must not be used for
+central coordination.

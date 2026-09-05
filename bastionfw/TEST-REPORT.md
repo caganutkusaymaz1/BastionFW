@@ -1,41 +1,40 @@
 # BastionFW Test Report
 
-**Tarih:** 2026-09-04  
-**Geliştirici:** Çağan Utku Saymaz  
-**Python:** 3.13.x çalışma ortamı (proje gereksinimi: 3.11+)  
-**Sonuç:** PASS
+**Date:** 2026-09-04
+**Developer:** Cagan Utku Saymaz
+**Python:** 3.13.x runtime (project requirement: 3.11+)
+**Result:** PASS
 
 ## Otomatik testler
 
 ```text
-Ran 8 tests in 0.035s
+Ran 10 tests in 0.056s
 OK
 ```
 
-| Test alanı | Kontrol |
+| Test area | Coverage |
 |---|---|
-| Configuration | JSON yükleme, environment dry-run override, boş kaynak reddi |
-| Detection | SSH eşik tespiti, birleşik web saldırı imzaları |
+| Configuration | JSON loading, environment dry-run override, empty-source rejection |
+| Detection | SSH threshold detection, combined web-attack signatures |
 | Firewall safety | loopback/RFC1918/whitelist reddi, duplicate ban engeli |
-| Parsing | JSON ve journal IP çıkarımı, double URL encoding çözümü |
-| Tailer | yarım satır birleştirme, rename tabanlı logrotate |
+| Parsing | JSON and journal IP extraction, double URL encoding normalization |
+| Tailer | incomplete-line joining, rename-based log rotation |
 
-## Ek doğrulamalar
+## Additional validation
 
 - `python -m compileall -q ed_bt_ade tests` → `compileall: PASS`
-- `python -m ed_bt_ade.sentinel --help` → CLI başarıyla açıldı
-- geçici dosyalı uçtan uca senaryo → `integration-ok`
+- `python -m ed_bt_ade.sentinel --help` → CLI started successfully
+- temporary-file end-to-end scenario → `integration-ok`
 - rename rotation senaryosu → `rotation-ok`
-- `run_staging.sh` + `demo-events.sh` + health/metrics akışı → `PASS`
-- grafik dashboard HTML endpoint’i → `PASS`
+- `run_staging.sh` + `demo-events.sh` + health/metrics flow → `PASS`
+- dashboard HTML endpoint → `PASS`
 - dashboard `/api/status` → `PASS`
-- dashboard canlı demo alarmı → `PASS`
+- live dashboard demo alert → `PASS`
 
-## Bu testlerin kapsamadığı alanlar
+## Not covered by these tests
 
-Bu sonuçlar gerçek bir üretim filosunda performans, ağ arızası, gerçek
-firewall ruleset uyumluluğu veya gerçek Threat Intelligence sağlayıcı
-cevaplarının garantisi değildir. Gerçek enforcement ve dış servisler
-özellikle konfigürasyonla kapalıdır. Üretim öncesi staging replay, load test,
-firewall-specific acceptance test ve sağlayıcı sözleşme/limit testleri
-ayrıca çalıştırılmalıdır.
+These results do not guarantee performance in a production fleet, network
+failure handling, firewall ruleset compatibility, or responses from a real
+threat-intelligence provider. Enforcement and external services are explicitly
+disabled by configuration. Before production, run staging replay, load tests,
+firewall-specific acceptance tests, and provider contract/rate-limit tests.

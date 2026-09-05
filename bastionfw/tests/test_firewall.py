@@ -2,9 +2,16 @@ import asyncio
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from ed_bt_ade.config import FirewallConfig
-from ed_bt_ade.firewall import FirewallDriver, FirewallOrchestrator
+from ed_bt_ade.firewall import (
+    FirewallDriver,
+    FirewallOrchestrator,
+    FirewallUnavailable,
+    MockFirewallDriver,
+    detect_driver,
+)
 
 
 class RecordingDriver(FirewallDriver):
@@ -16,6 +23,14 @@ class RecordingDriver(FirewallDriver):
 
     async def unblock(self, address: str) -> None:
         self.calls.append(("unblock", address))
+
+
+class UnavailableDriver(FirewallDriver):
+    async def block(self, address: str) -> None:
+        raise FirewallUnavailable("permission denied")
+
+    async def unblock(self, address: str) -> None:
+        raise FirewallUnavailable("permission denied")
 
 
 class FirewallTests(unittest.TestCase):
@@ -32,6 +47,20 @@ class FirewallTests(unittest.TestCase):
             self.assertTrue(asyncio.run(firewall.block("8.8.8.8", duration=1)))
             self.assertFalse(asyncio.run(firewall.block("8.8.8.8")))
             firewall.close()
+
+    def test_unavailable_driver_falls_back_without_recording_ban(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            config = FirewallConfig(state_db=Path(directory) / "state.db")
+            firewall = FirewallOrchestrator(config, UnavailableDriver())
+            self.assertFalse(asyncio.run(firewall.block("8.8.8.8")))
+            self.assertIsInstance(firewall.driver, MockFirewallDriver)
+            self.assertEqual(asyncio.run(firewall.unblock_expired()), 0)
+            firewall.close()
+
+    def test_missing_configured_executable_uses_mock_driver(self) -> None:
+        config = FirewallConfig(backend="iptables", enabled=True)
+        with patch("ed_bt_ade.firewall.shutil.which", return_value=None):
+            self.assertIsInstance(detect_driver(config), MockFirewallDriver)
 
 
 if __name__ == "__main__":

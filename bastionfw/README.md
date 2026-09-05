@@ -1,6 +1,6 @@
 # BastionFW v3.0
 
-**Geliştirici:** Çağan Utku Saymaz
+**Developer:** Cagan Utku Saymaz
 
 BastionFW is a defensive, modular log analyzer and active-defense
 orchestrator for Linux hosts. The first implementation is intentionally
@@ -22,14 +22,14 @@ python -m unittest discover -s tests -v
 python -m ed_bt_ade.sentinel --config config.example.json
 ```
 
-Yeni başlayanlar için güvenli ilk çalıştırma adımları
-`KULLANIM-KILAVUZU.md` dosyasındadır. En kolay demo:
+Safe first-run steps for new operators are in `KULLANIM-KILAVUZU.md`. The
+quickest demo is:
 
 ```bash
 bash run_dashboard.sh
 ```
 
-Başka bir terminalde örnek olay üretmek için:
+Generate sample events from another terminal:
 
 ```bash
 bash demo-events.sh

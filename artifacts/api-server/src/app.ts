@@ -12,6 +12,14 @@ import {
 } from "./middlewares/clerkProxyMiddleware";
 
 const app: Express = express();
+const allowedOrigins = new Set(
+  (process.env.CORS_ALLOWED_ORIGINS ?? "http://localhost:5173,http://127.0.0.1:5173")
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean),
+);
+
+app.disable("x-powered-by");
 
 app.use(
   pinoHttp({
@@ -33,9 +41,13 @@ app.use(
   }),
 );
 app.use(CLERK_PROXY_PATH, clerkProxyMiddleware());
-app.use(cors({ credentials: true, origin: true }));
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use(cors({
+  credentials: true,
+  origin: (origin, callback) =>
+    callback(null, !origin || allowedOrigins.has(origin)),
+}));
+app.use(express.json({ limit: "256kb", strict: true }));
+app.use(express.urlencoded({ extended: false, limit: "64kb" }));
 app.use(
   clerkMiddleware((req) => ({
     publishableKey: publishableKeyFromHost(

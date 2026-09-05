@@ -12,6 +12,7 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 
 class ConfigError(ValueError):
@@ -98,6 +99,19 @@ def _positive(value: Any, key: str, integer: bool = False) -> int | float:
 def _mapping(value: Any, key: str) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ConfigError(f"{key} must be an object")
+    return value
+
+
+def _validated_url(value: Any, key: str, allow_empty: bool = False) -> str:
+    if not isinstance(value, str) or (not value and not allow_empty):
+        raise ConfigError(f"{key} must be an HTTP(S) URL")
+    if not value and allow_empty:
+        return ""
+    parsed = urlparse(value)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ConfigError(f"{key} must be an HTTP(S) URL")
+    if parsed.username or parsed.password:
+        raise ConfigError(f"{key} must not contain embedded credentials")
     return value
 
 
@@ -239,7 +253,8 @@ def load_config(path: str | Path, environ: dict[str, str] | None = None) -> AppC
             "threat_intel.circuit_failure_threshold", integer=True),
         circuit_reset_seconds=_positive(ti_raw.get("circuit_reset_seconds", 60.0),
                                         "threat_intel.circuit_reset_seconds"),
-        abuseipdb_url=str(ti_raw.get("abuseipdb_url", "")),
+        abuseipdb_url=_validated_url(ti_raw.get("abuseipdb_url", ""),
+                         "threat_intel.abuseipdb_url", allow_empty=True),
     )
 
     detection_raw = _mapping(source.get("detection", {}), "detection")
@@ -263,7 +278,8 @@ def load_config(path: str | Path, environ: dict[str, str] | None = None) -> AppC
             raise ConfigError(f"invalid alert severity: {severity}")
         if not isinstance(urls, list) or not all(isinstance(url, str) and url for url in urls):
             raise ConfigError(f"alerting.webhooks.{severity} must be a list of URLs")
-        webhooks.append((severity, tuple(urls)))
+        webhooks.append((severity, tuple(
+            _validated_url(url, f"alerting.webhooks.{severity}") for url in urls)))
     alerting = AlertingConfig(
         webhooks=tuple(webhooks),
         batch_size=_positive(alerting_raw.get("batch_size", 20),
