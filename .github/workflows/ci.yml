@@ -1,0 +1,84 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  python:
+    name: Python tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: bastionfw
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: bastionfw/pyproject.toml
+
+      - name: Install package
+        run: python -m pip install --upgrade pip && python -m pip install .
+
+      - name: Compile Python sources
+        run: python -m compileall -q ed_bt_ade tests
+
+      - name: Install security scanners
+        run: python -m pip install bandit
+
+      # Fail the pipeline on any medium-or-higher finding (-ll reports low and
+      # above; -q prints only findings). continue-on-error is intentionally
+      # false so a regression turns the pipeline red.
+      - name: Bandit security scan
+        run: bandit -r ed_bt_ade -ll -q
+        continue-on-error: false
+
+      - name: Run tests
+        run: python -m unittest discover -s tests -v
+
+  typescript:
+    name: TypeScript checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # pnpm audit fails the job on any high-or-critical advisory
+      # (--audit-level=high). continue-on-error defaults to false here.
+      - name: Audit dependencies
+        run: pnpm audit --audit-level=high
+
+      - name: Run gitleaks (secret scanning)
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITLEAKS_ENABLE_UPLOAD_ARTIFACT: "false"
+          GITLEAKS_ENABLE_COMMENTS: "false"
+
+      - name: Typecheck workspace
+        run: pnpm run typecheck
+
+      - name: Build workspace
+        run: pnpm run build

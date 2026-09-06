@@ -1,0 +1,43 @@
+services:
+  bastionfw:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: bastionfw:local
+    restart: unless-stopped
+    ports:
+      - "${BASTIONFW_DASHBOARD_PORT:-8080}:8080"
+      - "${BASTIONFW_METRICS_PORT:-9109}:9109"
+    environment:
+      ED_BT_ADE_DRY_RUN: "${ED_BT_ADE_DRY_RUN:-true}"
+      ED_BT_ADE_LOG_LEVEL: "${ED_BT_ADE_LOG_LEVEL:-INFO}"
+      # Dashboard auth: see .env.example. Empty -> loopback-only fail-safe.
+      ED_BT_ADE_DASHBOARD_TOKEN: "${ED_BT_ADE_DASHBOARD_TOKEN:-}"
+      # Coraza WAF integration (Faz 1/2): disabled by default.
+      ED_BT_ADE_WAF_ENABLED: "${ED_BT_ADE_WAF_ENABLED:-false}"
+      ED_BT_ADE_WAF_MODE: "${ED_BT_ADE_WAF_MODE:-detect}"
+    volumes:
+      - bastionfw-state:/var/lib/bastionfw
+      - "${BASTIONFW_LOG_ROOT:-/var/log}:/host/var/log:ro"
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import urllib.request;
+          urllib.request.urlopen('http://127.0.0.1:9109/healthz', timeout=3)
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  bastionfw-state:
