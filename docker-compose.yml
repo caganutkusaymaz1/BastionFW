@@ -11,9 +11,14 @@ services:
     environment:
       ED_BT_ADE_DRY_RUN: "${ED_BT_ADE_DRY_RUN:-true}"
       ED_BT_ADE_LOG_LEVEL: "${ED_BT_ADE_LOG_LEVEL:-INFO}"
+      # REQUIRED for a network-exposed dashboard. Without this token the
+      # dashboard fail-safely binds to loopback only (see dashboard.py).
+      # Generate with: openssl rand -hex 32
+      ED_BT_ADE_DASHBOARD_TOKEN: "${ED_BT_ADE_DASHBOARD_TOKEN:-}"
     volumes:
       - bastionfw-state:/var/lib/bastionfw
       - "${BASTIONFW_LOG_ROOT:-/var/log}:/host/var/log:ro"
+      - waf-audit:/var/log/waf:ro
     cap_drop:
       - ALL
     security_opt:
@@ -34,5 +39,42 @@ services:
       retries: 3
       start_period: 10s
 
+  # Coraza WAF (OWASP CRS) reverse proxy. Default WAF_MODE=detect only logs;
+  # WAF_MODE=block is an explicit operator opt-in (see docs/OPERATIONS.md).
+  waf:
+    image: corazawaf/coraza-caddy:v2
+    restart: unless-stopped
+    depends_on:
+      bastionfw:
+        condition: service_started
+    ports:
+      - "${WAF_PORT:-8081}:8080"
+    environment:
+      # Compose interpolates UPSTREAM_URL from .env; the default proxies to the
+      # application container running behind the WAF.
+      UPSTREAM_URL: "${UPSTREAM_URL:-http://app:3000}"
+      WAF_MODE: "${WAF_MODE:-detect}"
+    volumes:
+      - waf-audit:/var/log/waf
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+    healthcheck:
+      test:
+        - CMD
+        - wget
+        - -q
+        - --spider
+        - http://127.0.0.1:8080/healthz
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 10s
+
 volumes:
   bastionfw-state:
+  waf-audit:

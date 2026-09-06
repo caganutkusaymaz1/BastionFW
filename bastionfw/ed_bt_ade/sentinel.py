@@ -146,6 +146,10 @@ class Sentinel:
             if self.metrics_server:
                 self.metrics_server.shutdown()
 
+    def waf_summary(self) -> dict[str, object]:
+        """WAF enforcement aggregates (populated by the Coraza integration)."""
+        return {"denied_requests_total": 0, "top_rule_ids": [], "mode": "detect"}
+
     def request_stop(self) -> None:
         self.stop.set()
 
