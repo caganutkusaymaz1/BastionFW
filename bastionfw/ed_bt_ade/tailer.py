@@ -14,6 +14,13 @@ from .parsing import extract_remote_ip
 
 LOGGER = logging.getLogger(__name__)
 
+# Upper bound for the un-split byte buffer holding a partially read line. A
+# pathological producer that never emits a newline (or a single record larger
+# than the cap) would otherwise grow this buffer without limit and exhaust
+# memory. When the cap is exceeded the buffer is truncated (the oversized,
+# unparseable record is dropped) and a warning is logged.
+MAX_BUFFER_BYTES = 1_048_576
+
 
 @dataclass(slots=True)
 class TailState:
@@ -84,6 +91,15 @@ class AsyncLogTailer:
         data = self._handle.read()
         self.state.offset += len(data)
         self._buffer += data
+        if len(self._buffer) > MAX_BUFFER_BYTES:
+            # Keep the tail so any newline that follows quickly still yields a
+            # line, but never let a newline-less producer exhaust memory.
+            dropped = len(self._buffer) - MAX_BUFFER_BYTES
+            self._buffer = self._buffer[-MAX_BUFFER_BYTES:]
+            LOGGER.warning(
+                "log line exceeded %d bytes; dropped %d bytes of one record",
+                MAX_BUFFER_BYTES, dropped,
+                extra={"event": "tailer_buffer_overflow", "source": self.source.name})
         # splitlines() cannot preserve a final incomplete record. Keep the
         # remainder in bytes so a later read completes it without data loss.
         if b"\n" not in self._buffer:

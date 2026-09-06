@@ -111,6 +111,16 @@ class Sentinel:
                 self.detector.purge()
                 await self.threat_intel.cache.purge()
 
+    async def purge_all_bans(self) -> int:
+        """Operator panic switch: drop every ban and the deadman liveness file.
+
+        Clears the firewall table immediately so the next ``sentinel`` start is
+        clean. Returns the number of removed bans.
+        """
+        removed = await self.firewall.purge_all()
+        self.deadman.request_stop()
+        return removed
+
     async def run(self) -> None:
         self.metrics_server = start_metrics_server(
             self.config.metrics_host, self.config.metrics_port, self.metrics, self.health)
@@ -192,6 +202,8 @@ def main() -> None:
     parser.add_argument("-c", "--config", default="config.example.json")
     parser.add_argument("--no-privilege-drop", action="store_true",
                         help="skip privilege drop (development hosts only)")
+    parser.add_argument("--purge-all-bans", action="store_true",
+                        help="remove all active and expired bans, then exit")
     args = parser.parse_args()
     config = load_config(Path(args.config))
     configure_logging(config.log_level, config.log_file)
@@ -204,6 +216,10 @@ def main() -> None:
         except PrivilegeDropError as exc:
             parser.error(f"refusing to run as root without privilege separation: {exc}")
     sentinel = Sentinel(config)
+    if args.purge_all_bans:
+        removed = asyncio.run(sentinel.purge_all_bans())
+        LOGGER.info("purged %d ban(s)", removed, extra={"event": "purge_all_bans"})
+        return
     async def runner() -> None:
         _install_signals(sentinel)
         await sentinel.run()

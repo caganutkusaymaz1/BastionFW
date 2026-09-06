@@ -248,6 +248,23 @@ class FirewallOrchestrator:
             self._db.commit()
             return len(rows)
 
+    async def purge_all(self) -> int:
+        """Immediately remove every ban, expired or still active.
+
+        Operator-facing panic switch (exposed as ``--purge-all-bans``). Unlike
+        ``unblock_expired`` it removes even addresses whose TTL has not run
+        out. The same ``driver.unblock`` path is used, so enforcement-layer
+        semantics and error handling stay identical.
+        """
+        async with self._lock:
+            rows = list(self._db.execute("SELECT address FROM bans"))
+            for (address,) in rows:
+                await self.driver.unblock(address)
+                self._blocked.discard(address)
+                self._db.execute("DELETE FROM bans WHERE address = ?", (address,))
+            self._db.commit()
+            return len(rows)
+
     async def cleanup_loop(self, stop: asyncio.Event, interval: float = 30.0) -> None:
         while not stop.is_set():
             try:
