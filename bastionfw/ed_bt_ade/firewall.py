@@ -14,6 +14,7 @@ from typing import Callable, Sequence
 
 from .config import FirewallConfig
 from .validation import parse_ip, parse_network
+from .waf_reputation import WafReputationDriver
 
 LOGGER = logging.getLogger(__name__)
 
@@ -167,9 +168,13 @@ def detect_driver(config: FirewallConfig) -> FirewallDriver:
 class FirewallOrchestrator:
     """Enforces IP/CIDR safety policy before touching the operating system."""
 
-    def __init__(self, config: FirewallConfig, driver: FirewallDriver | None = None) -> None:
+    def __init__(self, config: FirewallConfig, driver: FirewallDriver | None = None,
+                 waf_driver: "WafReputationDriver | None" = None) -> None:
         self.config = config
         self.driver = driver or detect_driver(config)
+        # Optional second enforcement layer: dynamic WAF deny-list. Failures
+        # here never block the L3/L4 path (best-effort, logged).
+        self.waf_driver = waf_driver
         self._blocked: set[str] = set()
         self._lock = asyncio.Lock()
         config.state_db.parent.mkdir(parents=True, exist_ok=True)
@@ -231,6 +236,12 @@ class FirewallOrchestrator:
                                extra={"event": "firewall_fallback", "reason": str(exc)})
                 self.driver = MockFirewallDriver()
                 return False
+            if self.waf_driver is not None:
+                try:
+                    await self.waf_driver.add(address)
+                except Exception:  # pragma: no cover - best-effort second layer
+                    LOGGER.exception("waf deny-list add failed",
+                                     extra={"event": "waf_add_error", "ip": address})
             expires = time.time() + (duration if duration is not None else self.config.ban_seconds)
             self._db.execute("INSERT OR REPLACE INTO bans VALUES (?, ?)", (address, expires))
             self._db.commit()
@@ -243,10 +254,20 @@ class FirewallOrchestrator:
             rows = list(self._db.execute("SELECT address FROM bans WHERE expires_at <= ?", (now,)))
             for (address,) in rows:
                 await self.driver.unblock(address)
+                await self._waf_remove(address)
                 self._blocked.discard(address)
                 self._db.execute("DELETE FROM bans WHERE address = ?", (address,))
             self._db.commit()
             return len(rows)
+
+    async def _waf_remove(self, address: str) -> None:
+        if self.waf_driver is None:
+            return
+        try:
+            await self.waf_driver.remove(address)
+        except Exception:  # pragma: no cover - best-effort second layer
+            LOGGER.exception("waf deny-list remove failed",
+                             extra={"event": "waf_remove_error", "ip": address})
 
     async def purge_all(self) -> int:
         """Immediately remove every ban, expired or still active.
@@ -260,6 +281,7 @@ class FirewallOrchestrator:
             rows = list(self._db.execute("SELECT address FROM bans"))
             for (address,) in rows:
                 await self.driver.unblock(address)
+                await self._waf_remove(address)
                 self._blocked.discard(address)
                 self._db.execute("DELETE FROM bans WHERE address = ?", (address,))
             self._db.commit()
