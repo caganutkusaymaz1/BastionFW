@@ -47,9 +47,13 @@ class Sentinel:
                                      resolve_rollback_seconds())
         self.rollback = RollbackCoordinator(self.firewall)
         self.metrics_server = None
+        self._loop: asyncio.AbstractEventLoop | None = None
         self.started_at = time.time()
         self.recent_alerts: deque[dict[str, object]] = deque(maxlen=100)
         self._alerts_lock = threading.Lock()
+
+    def _capture_loop(self) -> None:
+        self._loop = asyncio.get_running_loop()
 
     async def _process(self) -> None:
         while not self.stop.is_set() or not self.queue.empty():
@@ -127,6 +131,7 @@ class Sentinel:
         return removed
 
     async def run(self) -> None:
+        self._capture_loop()
         self.metrics_server = start_metrics_server(
             self.config.metrics_host, self.config.metrics_port, self.metrics, self.health)
         tailers = [AsyncLogTailer(source, self.queue, self.config.trusted_proxies)
@@ -164,6 +169,31 @@ class Sentinel:
     def waf_summary(self) -> dict[str, object]:
         """WAF enforcement aggregates (populated by the Coraza integration)."""
         return {"denied_requests_total": 0, "top_rule_ids": [], "mode": "detect"}
+
+    def login_alert_hook(self, reason: str) -> None:
+        """Route dashboard security alerts through the existing webhook pipeline."""
+        import asyncio as _asyncio
+
+        try:
+            loop = _asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+        alert = {
+            "rule": reason,
+            "severity": "high",
+            "source": "dashboard",
+            "ip": None,
+            "evidence": "dashboard authentication security event",
+        }
+        if loop is not None and loop.is_running():
+            _asyncio.create_task(self.dispatcher.submit(alert))
+        else:
+            # Dashboard handlers run in their own thread; submit on the
+            # engine loop via run_coroutine_threadsafe when it is running.
+            engine_loop = getattr(self, "_loop", None)
+            if engine_loop is not None:
+                _asyncio.run_coroutine_threadsafe(
+                    self.dispatcher.submit(alert), engine_loop)
 
     def request_stop(self) -> None:
         self.stop.set()

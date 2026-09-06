@@ -70,11 +70,15 @@ class LoginEndpointTests(unittest.TestCase):
         status, cookie = handle_login("Bearer wrong", "secret-token")
         self.assertEqual(status, 401)
         self.assertEqual(cookie, "")
+        # Contract updated by the rate-limiting round: alert_hook fires on
+        # brute-force lockout (a security signal worth paging an operator),
+        # while every individual failure is audit-logged instead. A single
+        # failure below the threshold therefore raises no alert.
         alerts: list[str] = []
         status, _ = handle_login("Bearer wrong", "secret-token",
                                  alert_hook=alerts.append)
         self.assertEqual(status, 401)
-        self.assertEqual(alerts, ["dashboard_login_failure"])
+        self.assertEqual(alerts, [])
 
     def test_login_sets_httponly_cookie_and_get_uses_it(self) -> None:
         server = self._server("correct-horse")

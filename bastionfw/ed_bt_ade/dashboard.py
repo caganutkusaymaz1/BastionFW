@@ -41,9 +41,16 @@ LOGIN_PATH = "/api/login"
 SESSION_COOKIE = "bastionfw_session"
 SESSION_MAX_AGE_SECONDS = 8 * 3600
 
+# Login rate limiting (Task C hardening): sliding window per client IP.
+LOGIN_MAX_FAILURES = 5
+LOGIN_LOCKOUT_SECONDS = 60
+LOGIN_WINDOW_SECONDS = 300
+LOGIN_MAX_TRACKED_IPS = 10_000  # absolute memory cap (DoS-safe)
+
 # Audit-log friendly login results (never include the token itself).
 _LOGIN_EVENT = "dashboard_login"
 _LOGIN_FAILURE_EVENT = "dashboard_login_failure"
+_BRUTE_FORCE_EVENT = "dashboard_brute_force"
 
 
 def resolve_dashboard_token(environ: dict[str, str] | None = None) -> str | None:
@@ -94,24 +101,83 @@ def handle_login(authorization: str | None, token: str | None,
 
     On success the caller receives ``200`` plus the value for a HttpOnly
     session cookie, so browsers never need the token in JavaScript or in a
-    URL. On failure ``401`` is returned. Every attempt is audit-logged with
-    the client IP, timestamp, and outcome — never the token itself.
-    ``alert_hook`` (wired by the Sentinel alerting pipeline) receives a short
-    reason string for security-relevant outcomes.
+    URL. On failure ``401`` is returned; after ``LOGIN_MAX_FAILURES`` failed
+    attempts inside the sliding window the IP is locked out for
+    ``LOGIN_LOCKOUT_SECONDS`` and receives ``429`` until it expires.
+
+    Every attempt is audit-logged with the client IP, timestamp, and outcome
+    — never the token itself. A lockout additionally fires ``alert_hook`` so
+    the Sentinel alerting pipeline can notify operators (brute-force signal).
     """
+    import time as _time
+
+    current = _time.time() if now is None else now
+    if is_login_locked_out(client_ip, current):
+        LOGGER.warning("dashboard login locked out (brute-force guard)", extra={
+            "event": _BRUTE_FORCE_EVENT, "ip": client_ip,
+            "result": "rate_limited"})
+        if alert_hook is not None:
+            alert_hook("dashboard_brute_force")
+        return 429, ""
     if not is_authorized(authorization, token):
+        record_login_failure(client_ip, current)
         LOGGER.warning("dashboard login failed", extra={
             "event": _LOGIN_FAILURE_EVENT, "ip": client_ip,
             "result": "failure"})
-        if alert_hook is not None:
-            alert_hook("dashboard_login_failure")
+        if alert_hook is not None and is_login_locked_out(client_ip, current):
+            # The failure that crossed the threshold fires the alert exactly
+            # once per lockout window.
+            alert_hook("dashboard_brute_force")
         return 401, ""
+    clear_login_failures(client_ip)
     LOGGER.info("dashboard login succeeded", extra={
         "event": _LOGIN_EVENT, "ip": client_ip, "result": "success"})
     if token is None:
         # Loopback-only unauthenticated dashboards have nothing to session.
         return 200, ""
     return 200, token
+
+
+# --- Login rate limiter (self-contained; no firewall dependency) ------------
+
+_login_failures: dict[str, list[float]] = {}
+
+
+def is_login_locked_out(client_ip: str, now: float) -> bool:
+    """True when this IP exhausted LOGIN_MAX_FAILURES inside the window."""
+    window_start = now - LOGIN_WINDOW_SECONDS
+    failures = [stamp for stamp in _login_failures.get(client_ip, ())
+                if stamp > window_start]
+    _login_failures[client_ip] = failures
+    if not failures and client_ip in _login_failures and not failures:
+        _login_failures.pop(client_ip, None)
+    if len(failures) >= LOGIN_MAX_FAILURES:
+        # Locked until the oldest failure in the window ages out.
+        return (failures[0] + LOGIN_LOCKOUT_SECONDS) > now
+    return False
+
+
+def record_login_failure(client_ip: str, now: float) -> None:
+    """Record one failed attempt; sweep stale state to stay memory-bounded."""
+    if len(_login_failures) >= LOGIN_MAX_TRACKED_IPS and client_ip not in _login_failures:
+        # Absolute cap: drop everything older than the window.
+        window_start = now - LOGIN_WINDOW_SECONDS
+        for ip in [ip for ip, stamps in _login_failures.items()
+                   if not stamps or max(stamps) <= window_start]:
+            _login_failures.pop(ip, None)
+        if len(_login_failures) >= LOGIN_MAX_TRACKED_IPS:
+            return  # still full: drop the new entry rather than grow unbounded
+    _login_failures.setdefault(client_ip, []).append(now)
+
+
+def clear_login_failures(client_ip: str) -> None:
+    """Reset failure history after a successful authentication."""
+    _login_failures.pop(client_ip, None)
+
+
+def reset_login_rate_limiter() -> None:
+    """Test/maintenance helper: clear all limiter state."""
+    _login_failures.clear()
 
 
 def start_dashboard_server(host: str, port: int, sentinel: Sentinel,
@@ -133,7 +199,11 @@ def start_dashboard_server(host: str, port: int, sentinel: Sentinel,
                 return
             status, cookie_value = handle_login(
                 self.headers.get("Authorization"), token,
-                client_ip=self.client_address[0] if self.client_address else "unknown")
+                client_ip=self.client_address[0] if self.client_address else "unknown",
+                alert_hook=getattr(sentinel, "login_alert_hook", None))
+            if status == 429:
+                self._send(429, b"rate limited\n", "text/plain")
+                return
             if status == 200 and cookie_value:
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json; charset=utf-8")
