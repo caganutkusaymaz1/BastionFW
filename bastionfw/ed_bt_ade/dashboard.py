@@ -37,6 +37,13 @@ DASHBOARD_TOKEN_ENV = "ED_BT_ADE_DASHBOARD_TOKEN"
 LOOPBACK_HOST = "127.0.0.1"
 MAX_TOKEN_LENGTH = 512
 PROTECTED_PATHS = frozenset({"/", "/index.html", "/api/status", "/api/metrics"})
+LOGIN_PATH = "/api/login"
+SESSION_COOKIE = "bastionfw_session"
+SESSION_MAX_AGE_SECONDS = 8 * 3600
+
+# Audit-log friendly login results (never include the token itself).
+_LOGIN_EVENT = "dashboard_login"
+_LOGIN_FAILURE_EVENT = "dashboard_login_failure"
 
 
 def resolve_dashboard_token(environ: dict[str, str] | None = None) -> str | None:
@@ -53,19 +60,58 @@ def _constant_time_equal(left: str, right: str) -> bool:
     return hmac.compare_digest(left.encode("utf-8"), right.encode("utf-8"))
 
 
-def is_authorized(header: str | None, token: str | None) -> bool:
-    """Validate an Authorization header against the configured bearer token."""
+def is_authorized(header: str | None, token: str | None,
+                  cookie_header: str | None = None) -> bool:
+    """Validate bearer header or session cookie against the configured token."""
     if token is None:
         return True
-    if not header:
-        return False
-    parts = header.split(None, 1)
-    if len(parts) != 2 or parts[0].lower() != "bearer":
-        return False
-    supplied = parts[1]
-    if supplied != supplied.strip() or not supplied or len(supplied) > MAX_TOKEN_LENGTH:
-        return False
-    return _constant_time_equal(supplied, token)
+    if header:
+        parts = header.split(None, 1)
+        if len(parts) == 2 and parts[0].lower() == "bearer":
+            supplied = parts[1]
+            if supplied == supplied.strip() and supplied and len(supplied) <= MAX_TOKEN_LENGTH:
+                return _constant_time_equal(supplied, token)
+    if cookie_header:
+        candidate = _session_cookie_value(cookie_header)
+        if candidate is not None and len(candidate) <= MAX_TOKEN_LENGTH:
+            return _constant_time_equal(candidate, token)
+    return False
+
+
+def _session_cookie_value(cookie_header: str) -> str | None:
+    """Extract the session cookie value from a Cookie header."""
+    for part in cookie_header.split(";"):
+        name, _, value = part.partition("=")
+        if name.strip() == SESSION_COOKIE and value:
+            return value.strip()
+    return None
+
+
+def handle_login(authorization: str | None, token: str | None,
+                 client_ip: str = "unknown", now: float | None = None,
+                 alert_hook: "callable[[str], None] | None" = None) -> tuple[int, str]:
+    """Authenticate a bearer token and return ``(status, set_cookie_value)``.
+
+    On success the caller receives ``200`` plus the value for a HttpOnly
+    session cookie, so browsers never need the token in JavaScript or in a
+    URL. On failure ``401`` is returned. Every attempt is audit-logged with
+    the client IP, timestamp, and outcome — never the token itself.
+    ``alert_hook`` (wired by the Sentinel alerting pipeline) receives a short
+    reason string for security-relevant outcomes.
+    """
+    if not is_authorized(authorization, token):
+        LOGGER.warning("dashboard login failed", extra={
+            "event": _LOGIN_FAILURE_EVENT, "ip": client_ip,
+            "result": "failure"})
+        if alert_hook is not None:
+            alert_hook("dashboard_login_failure")
+        return 401, ""
+    LOGGER.info("dashboard login succeeded", extra={
+        "event": _LOGIN_EVENT, "ip": client_ip, "result": "success"})
+    if token is None:
+        # Loopback-only unauthenticated dashboards have nothing to session.
+        return 200, ""
+    return 200, token
 
 
 def start_dashboard_server(host: str, port: int, sentinel: Sentinel,
@@ -81,9 +127,37 @@ def start_dashboard_server(host: str, port: int, sentinel: Sentinel,
             self.end_headers()
             self.wfile.write(body)
 
+        def do_POST(self) -> None:  # noqa: N802
+            if self.path.split("?", 1)[0] != LOGIN_PATH:
+                self._send(404, b"not found\n", "text/plain")
+                return
+            status, cookie_value = handle_login(
+                self.headers.get("Authorization"), token,
+                client_ip=self.client_address[0] if self.client_address else "unknown")
+            if status == 200 and cookie_value:
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Set-Cookie",
+                                 f"{SESSION_COOKIE}={cookie_value}; HttpOnly; "
+                                 f"Max-Age={SESSION_MAX_AGE_SECONDS}; Path=/; "
+                                 "SameSite=Strict")
+                body = b'{"authenticated": true}\n'
+            elif status == 200:
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                body = b'{"authenticated": true}\n'
+            else:
+                self._send(401, b"unauthorized\n", "text/plain")
+                return
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(body)
+
         def do_GET(self) -> None:  # noqa: N802
             if self.path.split("?", 1)[0] in PROTECTED_PATHS and not is_authorized(
-                    self.headers.get("Authorization"), token):
+                    self.headers.get("Authorization"), token,
+                    self.headers.get("Cookie")):
                 self._send(401, b"unauthorized\n", "text/plain")
                 return
             if self.path.split("?", 1)[0] in {"/", "/index.html"}:

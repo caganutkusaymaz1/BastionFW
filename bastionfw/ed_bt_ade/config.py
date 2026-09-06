@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass, field
+from ipaddress import ip_address
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -72,12 +73,28 @@ class AlertingConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class WafConfig:
+    """Settings for the Coraza WAF integration.
+
+    ``trusted_internal_hosts`` is the explicit operator allowlist of internal
+    hostnames or IPs that outbound calls may target even though they resolve
+    into private ranges. This is required for compose deployments where the
+    WAF audit feed, dashboard proxy, or webhooks legitimately point at
+    internal service names (e.g. ``http://waf:8080``). Anything not listed
+    here is rejected by ``_validated_url`` before a request is ever made.
+    """
+
+    trusted_internal_hosts: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class AppConfig:
     log_sources: tuple[LogSource, ...]
     firewall: FirewallConfig = field(default_factory=FirewallConfig)
     threat_intel: ThreatIntelConfig = field(default_factory=ThreatIntelConfig)
     detection: DetectionConfig = field(default_factory=DetectionConfig)
     alerting: AlertingConfig = field(default_factory=AlertingConfig)
+    waf: WafConfig = field(default_factory=WafConfig)
     queue_size: int = 50_000
     metrics_host: str = "127.0.0.1"
     metrics_port: int = 9109
@@ -110,7 +127,17 @@ def _mapping(value: Any, key: str) -> dict[str, Any]:
     return value
 
 
-def _validated_url(value: Any, key: str, allow_empty: bool = False) -> str:
+def _validated_url(value: Any, key: str, allow_empty: bool = False,
+                   trusted_internal_hosts: tuple[str, ...] = ()) -> str:
+    """Validate an HTTP(S) URL and reject private-range / metadata targets.
+
+    The engine makes outbound HTTP requests to operator-configured URLs
+    (threat-intel APIs, alerting webhooks). A tampered or mistaken config
+    must not be able to turn those requests into an SSRF vector against
+    internal services or cloud metadata endpoints, so hosts that resolve to
+    private, loopback, link-local, or reserved ranges are refused unless the
+    hostname is explicitly listed in ``waf.trusted_internal_hosts``.
+    """
     if not isinstance(value, str) or (not value and not allow_empty):
         raise ConfigError(f"{key} must be an HTTP(S) URL")
     if not value and allow_empty:
@@ -120,6 +147,19 @@ def _validated_url(value: Any, key: str, allow_empty: bool = False) -> str:
         raise ConfigError(f"{key} must be an HTTP(S) URL")
     if parsed.username or parsed.password:
         raise ConfigError(f"{key} must not contain embedded credentials")
+    hostname = (parsed.hostname or "").rstrip(".").lower()
+    if hostname and hostname not in {host.lower() for host in trusted_internal_hosts}:
+        try:
+            address = ip_address(hostname)
+        except ValueError:
+            address = None
+        if address is not None and (not address.is_global or address.is_private
+                                    or address.is_loopback or address.is_link_local
+                                    or address.is_reserved or address.is_multicast):
+            raise ConfigError(
+                f"{key} must not target a private, loopback, link-local, or "
+                f"reserved address ({hostname}); list it in "
+                "waf.trusted_internal_hosts if this internal endpoint is intended")
     return value
 
 
@@ -264,6 +304,14 @@ def load_config(path: str | Path, environ: dict[str, str] | None = None) -> AppC
         whitelist=tuple(whitelist),
     )
 
+    waf_raw = _mapping(source.get("waf", {}), "waf")
+    raw_internal_hosts = waf_raw.get("trusted_internal_hosts", [])
+    if not isinstance(raw_internal_hosts, list) or not all(
+            isinstance(host, str) and host.strip() for host in raw_internal_hosts):
+        raise ConfigError("waf.trusted_internal_hosts must be a list of hostnames or IPs")
+    trusted_internal_hosts = tuple(str(host).strip().lower().rstrip(".")
+                                   for host in raw_internal_hosts)
+
     ti_raw = _mapping(source.get("threat_intel", {}), "threat_intel")
     ti = ThreatIntelConfig(
         enabled=_as_bool(ti_raw.get("enabled", False), "threat_intel.enabled"),
@@ -278,7 +326,8 @@ def load_config(path: str | Path, environ: dict[str, str] | None = None) -> AppC
         circuit_reset_seconds=_positive(ti_raw.get("circuit_reset_seconds", 60.0),
                                         "threat_intel.circuit_reset_seconds"),
         abuseipdb_url=_validated_url(ti_raw.get("abuseipdb_url", ""),
-                         "threat_intel.abuseipdb_url", allow_empty=True),
+                         "threat_intel.abuseipdb_url", allow_empty=True,
+                         trusted_internal_hosts=trusted_internal_hosts),
     )
 
     detection_raw = _mapping(source.get("detection", {}), "detection")
@@ -303,7 +352,9 @@ def load_config(path: str | Path, environ: dict[str, str] | None = None) -> AppC
         if not isinstance(urls, list) or not all(isinstance(url, str) and url for url in urls):
             raise ConfigError(f"alerting.webhooks.{severity} must be a list of URLs")
         webhooks.append((severity, tuple(
-            _validated_url(url, f"alerting.webhooks.{severity}") for url in urls)))
+            _validated_url(url, f"alerting.webhooks.{severity}",
+                           trusted_internal_hosts=trusted_internal_hosts)
+            for url in urls)))
     alerting = AlertingConfig(
         webhooks=tuple(webhooks),
         batch_size=_positive(alerting_raw.get("batch_size", 20),
@@ -337,6 +388,7 @@ def load_config(path: str | Path, environ: dict[str, str] | None = None) -> AppC
         threat_intel=ti,
         detection=detection,
         alerting=alerting,
+        waf=WafConfig(trusted_internal_hosts=trusted_internal_hosts),
         queue_size=queue_size,
         metrics_host=str(source.get("metrics_host", "127.0.0.1")),
         metrics_port=port,
