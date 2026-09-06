@@ -68,7 +68,10 @@ class WebhookDispatcher:
     def _post(url: str, alerts: list[dict[str, Any]]) -> None:
         payload = json.dumps({"alerts": alerts}, separators=(",", ":")).encode()
         request = Request(url, data=payload, headers={"Content-Type": "application/json"})
-        with urlopen(request, timeout=8):  # noqa: S310 - URL is operator configuration
+        # URL is operator configuration validated by config._validated_url:
+        # HTTP/S only, no embedded credentials, non-private unless the host
+        # is explicitly allowlisted in waf.trusted_internal_hosts.
+        with urlopen(request, timeout=8):  # nosec B310
             return
 
     def close(self) -> None:

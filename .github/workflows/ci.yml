@@ -80,6 +80,11 @@ jobs:
 
       - name: Build workspace
         run: pnpm run build
+        env:
+          # Freebuff-injected build variables (vite configs require them);
+          # CI builds use neutral placeholders.
+          PORT: "8080"
+          BASE_PATH: "/"
 
   secrets:
     name: Secret leak scan

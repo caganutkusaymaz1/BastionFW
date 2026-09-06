@@ -193,7 +193,10 @@ class ThreatIntelClient:
         # turn into a query-string injection via raw interpolation.
         request = Request(
             self.url + "?ipAddress=" + quote(str(parse_ip(ip))), headers=headers)
-        with urlopen(request, timeout=7) as response:  # noqa: S310 - configured endpoint
+        # Endpoint is operator configuration validated by config._validated_url
+        # (HTTP/S only, no embedded credentials, non-private unless the host
+        # is explicitly allowlisted in waf.trusted_internal_hosts).
+        with urlopen(request, timeout=7) as response:  # nosec B310
             data = json.loads(response.read().decode())
         score = float(data.get("data", {}).get("abuseConfidenceScore", 0))
         return Reputation(ip, score, "abuseipdb", time.time())
