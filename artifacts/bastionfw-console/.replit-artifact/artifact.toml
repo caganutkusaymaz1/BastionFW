@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/"
+title = "BastionFW Console"
+description = "A defensive security operations console for monitoring detections, reviewing live events, and safely managing staged firewall actions."
+version = "1.0.0"
+id = "artifacts/bastionfw-console"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 19549
+
+[services.development]
+run = "pnpm --filter @workspace/bastionfw-console run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/bastionfw-console", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/bastionfw-console/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "19549"
+BASE_PATH = "/"

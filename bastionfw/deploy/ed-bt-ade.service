@@ -1,0 +1,25 @@
+[Unit]
+Description=BastionFW Blue Team Log Analyzer
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=bastionfw
+Group=bastionfw
+WorkingDirectory=/opt/bastionfw
+ExecStart=/usr/bin/python3 -m ed_bt_ade.sentinel --config /etc/bastionfw/config.json
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/bastionfw
+# Add only the log paths and state directory required by the deployment.
+ReadOnlyPaths=/var/log
+CapabilityBoundingSet=CAP_NET_ADMIN
+AmbientCapabilities=CAP_NET_ADMIN
+
+[Install]
+WantedBy=multi-user.target
