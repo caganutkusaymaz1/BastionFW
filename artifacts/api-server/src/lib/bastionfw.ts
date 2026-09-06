@@ -182,14 +182,11 @@ export function attackCountsFrom(snapshot: BastionSnapshot): Array<{
   return Array.from(counts.entries())
     .sort((left, right) => right[1] - left[1])
     .slice(0, 8)
-    .map(([rule, count]) => {
-      const presentation = RULE_PRESENTATION[rule] ?? { label: rule };
-      return {
-        label: presentation.label ?? rule,
-        count,
-        color: presentation.color ?? "#8ea6c1",
-      };
-    });
+    .map(([rule, count]) => ({
+      label: RULE_PRESENTATION[rule]?.label ?? rule,
+      count,
+      color: RULE_PRESENTATION[rule]?.color ?? "#8ea6c1",
+    }));
 }
 
 export function eventIdFor(alert: SnapshotAlert, index: number): string {
