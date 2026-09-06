@@ -5,226 +5,84 @@ import {
   BanAddressResponse,
   ControlServiceBody,
   ControlServiceResponse,
-  GetSecurityOverviewResponse,
   ListSecurityEventsQueryParams,
   ListSecurityEventsResponse,
-  RefreshThreatIntelResponse,
   UnbanAddressBody,
   UnbanAddressResponse,
 } from "@workspace/api-zod";
 import { requireAuth } from "../middlewares/requireAuth";
 
+/**
+ * Proxy layer in front of the real BastionFW dashboard API.
+ *
+ * Every request is forwarded to the Python engine's authenticated dashboard
+ * (``dashboard.py``). No mock or dummy data lives here: if the engine is
+ * unreachable the API answers 502 with a JSON error, never fabricated
+ * metrics.
+ *
+ * Configuration (environment):
+ * - BASTIONFW_API_URL: base URL of the engine dashboard, e.g.
+ *   ``http://bastionfw:8080`` (compose-internal name is fine; the engine
+ *   side allowlists internal hosts via waf.trusted_internal_hosts).
+ * - BASTIONFW_API_TOKEN: the dashboard bearer token
+ *   (ED_BT_ADE_DASHBOARD_TOKEN value on the engine). Keep this secret;
+ *   it is sent only server-side and never returned to clients.
+ *
+ * Timeouts are bounded so a hung engine cannot pin Express workers.
+ */
 const router: IRouter = Router();
-const mode = "DRY-RUN" as const;
 
-type Event = {
-  id: string;
-  timestamp: string;
-  severity: "critical" | "high" | "medium" | "low";
-  rule: string;
-  source: string;
-  ip: string;
-  evidence: string;
-  status: "blocked" | "observed" | "mitigated";
-};
+const UPSTREAM_URL = (process.env.BASTIONFW_API_URL ?? "").replace(/\/+$/, "");
+const UPSTREAM_TOKEN = process.env.BASTIONFW_API_TOKEN ?? "";
+const UPSTREAM_TIMEOUT_MS = Number(process.env.BASTIONFW_API_TIMEOUT_MS ?? 5_000);
 
-const events: Event[] = [
-  {
-    id: "evt-7f2a",
-    timestamp: new Date(Date.now() - 1000 * 60 * 3).toISOString(),
-    severity: "critical",
-    rule: "web_attack",
-    source: "nginx/access.log",
-    ip: "185.220.101.42",
-    evidence: "union select detected in request query",
-    status: "blocked",
-  },
-  {
-    id: "evt-7f29",
-    timestamp: new Date(Date.now() - 1000 * 60 * 7).toISOString(),
-    severity: "high",
-    rule: "ssh_brute_force",
-    source: "auth.log",
-    ip: "45.148.10.91",
-    evidence: "14 failed attempts / 60s",
-    status: "blocked",
-  },
-  {
-    id: "evt-7f28",
-    timestamp: new Date(Date.now() - 1000 * 60 * 12).toISOString(),
-    severity: "high",
-    rule: "lfi_path_traversal",
-    source: "nginx/access.log",
-    ip: "91.240.118.172",
-    evidence: "encoded traversal reached /etc/passwd",
-    status: "mitigated",
-  },
-  {
-    id: "evt-7f27",
-    timestamp: new Date(Date.now() - 1000 * 60 * 18).toISOString(),
-    severity: "medium",
-    rule: "xss",
-    source: "nginx/access.log",
-    ip: "103.41.12.8",
-    evidence: "inline event handler in request payload",
-    status: "observed",
-  },
-  {
-    id: "evt-7f26",
-    timestamp: new Date(Date.now() - 1000 * 60 * 24).toISOString(),
-    severity: "medium",
-    rule: "command_injection",
-    source: "nginx/access.log",
-    ip: "172.104.31.6",
-    evidence: "shell separator followed by uname",
-    status: "blocked",
-  },
-];
-
-const blockedAddresses = new Set(["185.220.101.42", "45.148.10.91"]);
-const serviceStates = new Map<string, "running" | "stopped" | "degraded">([
-  ["sentinel", "running"],
-  ["firewall", "running"],
-  ["threat-intel", "degraded"],
-]);
-
-function overview() {
-  return GetSecurityOverviewResponse.parse({
-    ready: true,
-    mode,
-    uptimeSeconds: 18_420,
-    queueDepth: 37,
-    logsProcessed: 1_284_921,
-    threatsDetected: 842,
-    ipsBlocked: blockedAddresses.size,
-    pipelineErrors: 2,
-    eventsPerMinute: 126,
-    protectedSources: 4,
-    attackCounts: [
-      { label: "SQLi", count: 312, color: "#f87171" },
-      { label: "Brute force", count: 241, color: "#fb923c" },
-      { label: "Traversal", count: 157, color: "#facc15" },
-      { label: "XSS", count: 89, color: "#a78bfa" },
-      { label: "Command", count: 43, color: "#38bdf8" },
-    ],
-    traffic: [
-      { label: "00:00", requests: 72, blocked: 12 },
-      { label: "04:00", requests: 44, blocked: 8 },
-      { label: "08:00", requests: 126, blocked: 22 },
-      { label: "12:00", requests: 98, blocked: 18 },
-      { label: "16:00", requests: 184, blocked: 41 },
-      { label: "20:00", requests: 148, blocked: 26 },
-      { label: "Now", requests: 216, blocked: 54 },
-    ],
-    blockedAddresses: Array.from(blockedAddresses),
-    threatIntel: {
-      status: "degraded",
-      lastRefresh: new Date(Date.now() - 1000 * 60 * 11).toISOString(),
-      provider: "AbuseIPDB adapter",
-    },
-    services: [
-      {
-        name: "sentinel",
-        state: serviceStates.get("sentinel"),
-        detail: "4 log sources protected",
-      },
-      {
-        name: "firewall",
-        state: serviceStates.get("firewall"),
-        detail: mode === "DRY-RUN" ? "Staging rules only" : "nftables active",
-      },
-      {
-        name: "threat-intel",
-        state: serviceStates.get("threat-intel"),
-        detail: "Provider circuit half-open",
-      },
-    ],
-  });
+function upstreamConfigured(): boolean {
+  return UPSTREAM_URL.length > 0;
 }
 
-function action(message: string) {
-  return { ok: true, message, mode };
+type UpstreamResult =
+  | { ok: true; status: number; body: unknown }
+  | { ok: false; status: number; error: string };
+
+async function callUpstream(
+  path: string,
+  init: { method: "GET" | "POST"; body?: unknown },
+): Promise<UpstreamResult> {
+  if (!upstreamConfigured()) {
+    return {
+      ok: false,
+      status: 503,
+      error:
+        "BastionFW engine upstream is not configured; set BASTIONFW_API_URL and BASTIONFW_API_TOKEN.",
+    };
+  }
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), UPSTREAM_TIMEOUT_MS);
+  try {
+    const response = await fetch(`${UPSTREAM_URL}${path}`, {
+      method: init.method,
+      headers: {
+        Authorization: `Bearer ${UPSTREAM_TOKEN}`,
+        ...(init.body !== undefined ? { "Content-Type": "application/json" } : {}),
+      },
+      body: init.body !== undefined ? JSON.stringify(init.body) : undefined,
+      signal: controller.signal,
+    });
+    const text = await response.text();
+    let body: unknown;
+    try {
+      body = text.length > 0 ? JSON.parse(text) : null;
+    } catch {
+      body = text;
+    }
+    return { ok: true, status: response.status, body };
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : "unknown error";
+    return { ok: false, status: 502, error: `BastionFW engine unreachable: ${reason}` };
+  } finally {
+    clearTimeout(timer);
+  }
 }
-
-router.use(requireAuth);
-
-router.get("/overview", (_req, res) => {
-  res.json(overview());
-});
-
-router.get("/events", (req, res) => {
-  const parsed = ListSecurityEventsQueryParams.safeParse({
-    limit: req.query.limit,
-    severity: req.query.severity,
-  });
-  if (!parsed.success) {
-    res.status(400).json({ error: "Invalid event query." });
-    return;
-  }
-  const query = parsed.data;
-  const result = events
-    .filter((event) => !query.severity || event.severity === query.severity)
-    .slice(0, query.limit ?? 20);
-  res.json(ListSecurityEventsResponse.parse(result));
-});
-
-router.post("/actions/ban", (req, res) => {
-  const parsed = BanAddressBody.safeParse(req.body);
-  if (!parsed.success) {
-    res.status(400).json({ error: "A valid IP address is required." });
-    return;
-  }
-  const body = parsed.data;
-  const ip = body.ip.trim();
-  if (!isPublicAddress(ip)) {
-    res.status(400).json({ error: "Only public IP addresses can be staged." });
-    return;
-  }
-  blockedAddresses.add(ip);
-  res.json(BanAddressResponse.parse(action(`Ban staged for ${ip} in dry-run mode.`)));
-});
-
-router.post("/actions/unban", (req, res) => {
-  const parsed = UnbanAddressBody.safeParse(req.body);
-  if (!parsed.success) {
-    res.status(400).json({ error: "A valid IP address is required." });
-    return;
-  }
-  const body = parsed.data;
-  const ip = body.ip.trim();
-  if (!isPublicAddress(ip)) {
-    res.status(400).json({ error: "Only public IP addresses can be staged." });
-    return;
-  }
-  blockedAddresses.delete(ip);
-  res.json(UnbanAddressResponse.parse(action(`Unban staged for ${ip} in dry-run mode.`)));
-});
-
-router.post("/actions/threat-intel", (_req, res) => {
-  res.json(
-    RefreshThreatIntelResponse.parse(
-      action("Threat intelligence refresh queued; provider remains isolated from ingestion."),
-    ),
-  );
-});
-
-router.post("/actions/service", (req, res) => {
-  const parsed = ControlServiceBody.safeParse(req.body);
-  if (!parsed.success) {
-    res.status(400).json({ error: "A valid service action is required." });
-    return;
-  }
-  const body = parsed.data;
-  const current = serviceStates.get(body.service) ?? "stopped";
-  const next = body.action === "stop" ? "stopped" : "running";
-  serviceStates.set(body.service, next);
-  const verb = body.action === "restart" ? "Restart queued" : `${body.action} requested`;
-  res.json(
-    ControlServiceResponse.parse(
-      action(`${verb} for ${body.service}; state ${current} → ${next} in dry-run mode.`),
-    ),
-  );
-});
 
 function isPublicAddress(value: string) {
   // Reuse the Python-side policy via Node: accept only true global unicast
@@ -253,5 +111,148 @@ function isPublicAddress(value: string) {
     !lower.startsWith("64:ff9b:") && // RFC 6052 NAT64 translation prefix
     !lower.startsWith("::ffff:0:");
 }
+
+router.use(requireAuth);
+
+router.get("/overview", async (_req, res) => {
+  const upstream = await callUpstream("/api/status", { method: "GET" });
+  if (!upstream.ok) {
+    res.status(upstream.status).json({ error: upstream.error });
+    return;
+  }
+  if (upstream.status !== 200 || typeof upstream.body !== "object" || upstream.body === null) {
+    res.status(502).json({ error: "Unexpected engine dashboard response." });
+    return;
+  }
+  // Forward the engine snapshot verbatim (snake_case fields from
+  // dashboard.py); the console maps field names presentationally.
+  res.json(upstream.body);
+});
+
+router.get("/events", async (req, res) => {
+  const parsed = ListSecurityEventsQueryParams.safeParse({
+    limit: req.query.limit,
+    severity: req.query.severity,
+  });
+  if (!parsed.success) {
+    res.status(400).json({ error: "Invalid event query." });
+    return;
+  }
+  // The engine's dashboard exposes recent alerts inside /api/status. Map the
+  // queried severity/limit onto that feed — no client-side fabrication.
+  const upstream = await callUpstream("/api/status", { method: "GET" });
+  if (!upstream.ok) {
+    res.status(upstream.status).json({ error: upstream.error });
+    return;
+  }
+  const body = upstream.body as { alerts?: unknown } | null;
+  const alerts = Array.isArray(body?.alerts) ? body!.alerts : [];
+  const query = parsed.data;
+  const filtered = (alerts as Array<Record<string, unknown>>)
+    .filter((alert) => !query.severity || alert.severity === query.severity)
+    .slice(0, query.limit ?? 20)
+    .map((alert, index) => ({
+      id: `alert-${index}`,
+      timestamp: typeof alert.timestamp === "number"
+        ? new Date(alert.timestamp * 1000).toISOString()
+        : new Date().toISOString(),
+      severity: typeof alert.severity === "string" ? alert.severity : "low",
+      rule: typeof alert.rule === "string" ? alert.rule : "unknown",
+      source: typeof alert.source === "string" ? alert.source : "engine",
+      ip: typeof alert.ip === "string" ? alert.ip : "",
+      evidence: typeof alert.evidence === "string" ? alert.evidence : "",
+      status: "observed" as const,
+    }));
+  res.json(ListSecurityEventsResponse.parse(filtered));
+});
+
+router.post("/actions/ban", (req, res) => {
+  const parsed = BanAddressBody.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "A valid IP address is required." });
+    return;
+  }
+  const ip = parsed.data.ip.trim();
+  if (!isPublicAddress(ip)) {
+    res.status(400).json({ error: "Only public IP addresses can be staged." });
+    return;
+  }
+  void (async () => {
+    const upstream = await callUpstream("/api/status", { method: "GET" });
+    if (!upstream.ok) {
+      res.status(upstream.status).json({ error: upstream.error });
+      return;
+    }
+    // The engine dashboard is a read-only monitor; operator bans are applied
+    // through the engine host's nftables tooling. Report the validated
+    // request honestly instead of pretending it was applied here.
+    res.json(BanAddressResponse.parse({
+      ok: false,
+      message: `Ban request for ${ip} validated; apply it on the engine host (dashboard API is read-only).`,
+      mode: "DRY-RUN",
+    }));
+  })();
+});
+
+router.post("/actions/unban", (req, res) => {
+  const parsed = UnbanAddressBody.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "A valid IP address is required." });
+    return;
+  }
+  const ip = parsed.data.ip.trim();
+  if (!isPublicAddress(ip)) {
+    res.status(400).json({ error: "Only public IP addresses can be staged." });
+    return;
+  }
+  void (async () => {
+    const upstream = await callUpstream("/api/status", { method: "GET" });
+    if (!upstream.ok) {
+      res.status(upstream.status).json({ error: upstream.error });
+      return;
+    }
+    res.json(UnbanAddressResponse.parse({
+      ok: false,
+      message: `Unban request for ${ip} validated; apply it on the engine host (dashboard API is read-only).`,
+      mode: "DRY-RUN",
+    }));
+  })();
+});
+
+router.post("/actions/threat-intel", (_req, res) => {
+  void (async () => {
+    const upstream = await callUpstream("/api/status", { method: "GET" });
+    if (!upstream.ok) {
+      res.status(upstream.status).json({ error: upstream.error });
+      return;
+    }
+    res.json(BanAddressResponse.parse({
+      ok: true,
+      message: "Engine reachable; threat-intel refresh runs on the engine host schedule.",
+      mode: "DRY-RUN",
+    }));
+  })();
+});
+
+router.post("/actions/service", (req, res) => {
+  const parsed = ControlServiceBody.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "A valid service action is required." });
+    return;
+  }
+  void (async () => {
+    const upstream = await callUpstream("/api/status", { method: "GET" });
+    if (!upstream.ok) {
+      res.status(upstream.status).json({ error: upstream.error });
+      return;
+    }
+    const body = parsed.data;
+    res.json(ControlServiceResponse.parse({
+      ok: true,
+      message: `Engine reachable; ${body.action} for ${body.service} must be issued on the engine host (systemd).`,
+      mode: "DRY-RUN",
+    }));
+  })();
+});
 
 export default router;
