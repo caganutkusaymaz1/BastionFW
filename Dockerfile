@@ -1,4 +1,8 @@
-FROM python:3.13-slim AS runtime
+# syntax=docker/dockerfile:1
+# Base image is pinned by digest so upstream tags can never silently change
+# under us (supply-chain hardening). To bump: docker pull python:3.13-slim,
+# copy the new RepoDigests value, update this line, and run the CI Trivy scan.
+FROM python:3.13-slim@sha256:9d2e5553305c7c7b0097999bb17187c69b921ccd6bc9d40e4bb5ebe652c00285 AS runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -7,9 +11,14 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 COPY bastionfw/pyproject.toml bastionfw/README.md ./
+COPY bastionfw/requirements.lock ./requirements.lock
 COPY bastionfw/ed_bt_ade ./ed_bt_ade
 
-RUN pip install --no-cache-dir . \
+# Install from the hash-pinned lock file: every artifact is verified against
+# its recorded sha256 before installation (pip refuses mismatches), then the
+# application itself is installed without re-resolving dependencies.
+RUN pip install --no-cache-dir --require-hashes -r requirements.lock \
+    && pip install --no-cache-dir --no-deps . \
     && useradd --create-home --uid 10001 --shell /usr/sbin/nologin bastionfw \
     && mkdir -p /var/lib/bastionfw \
     && chown -R bastionfw:bastionfw /app /var/lib/bastionfw

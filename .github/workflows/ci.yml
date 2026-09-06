@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   python:
-    name: Python tests
+    name: Python tests, coverage & SAST
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -24,19 +24,34 @@ jobs:
         with:
           python-version: "3.13"
           cache: pip
-          cache-dependency-path: bastionfw/pyproject.toml
+          cache-dependency-path: bastionfw/requirements.lock
 
-      - name: Install package
-        run: python -m pip install --upgrade pip && python -m pip install .
+      - name: Install package and test tools
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --require-hashes -r requirements.lock
+          python -m pip install --no-deps .
+          python -m pip install pytest pytest-cov hypothesis bandit[toml]
 
       - name: Compile Python sources
         run: python -m compileall -q ed_bt_ade tests
 
-      - name: Run tests
-        run: python -m unittest discover -s tests -v
+      - name: Bandit static security analysis
+        run: bandit -r ed_bt_ade -ll -q
+        continue-on-error: false
+
+      - name: Run tests with coverage gate (80%)
+        run: >
+          python -m pytest
+          --cov=ed_bt_ade --cov-report=term-missing
+          --cov-fail-under=80
+          -q
+
+      - name: Run tests (unittest suite parity)
+        run: python -m unittest discover -s tests -q
 
   typescript:
-    name: TypeScript checks
+    name: TypeScript checks & audit
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
@@ -53,11 +68,89 @@ jobs:
           node-version: "22"
           cache: pnpm
 
-      - name: Install dependencies
+      - name: Install dependencies (frozen lockfile)
         run: pnpm install --frozen-lockfile
+
+      - name: pnpm audit (fail on high or critical)
+        run: pnpm audit --audit-level=high --prod
+        continue-on-error: false
 
       - name: Typecheck workspace
         run: pnpm run typecheck
 
       - name: Build workspace
         run: pnpm run build
+
+  secrets:
+    name: Secret leak scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  supply-chain:
+    name: SBOM & container image scan
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build bastionfw image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: false
+          tags: bastionfw:latest
+          load: true
+
+      - name: Build waf image (digest-pinned Coraza upstream)
+        run: docker pull corazawaf/coraza-caddy:v2 && docker tag corazawaf/coraza-caddy:v2 waf:latest
+
+      - name: Install Syft (SBOM)
+        uses: anchore/sbom-action/download-syft@v0
+
+      - name: Generate SBOM for bastionfw image
+        uses: anchore/sbom-action@v0
+        with:
+          image: bastionfw:latest
+          format: cyclonedx-json
+          artifact-name: sbom-bastionfw.cdx.json
+          upload-artifact: true
+
+      - name: Generate SBOM for waf image
+        uses: anchore/sbom-action@v0
+        with:
+          image: waf:latest
+          format: cyclonedx-json
+          artifact-name: sbom-waf.cdx.json
+          upload-artifact: true
+
+      - name: Trivy scan bastionfw image
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: bastionfw:latest
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+          ignore-unfixed: true
+
+      - name: Trivy scan waf image
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: waf:latest
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+          ignore-unfixed: true
