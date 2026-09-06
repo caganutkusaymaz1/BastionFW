@@ -18,6 +18,12 @@ services:
       ED_BT_ADE_WAF_MODE: "${ED_BT_ADE_WAF_MODE:-detect}"
     volumes:
       - bastionfw-state:/var/lib/bastionfw
+      # Dynamic deny-list + engine-mode file shared with the waf service.
+      - bastionfw-waf:/var/lib/bastionfw/waf
+      # Coraza JSON audit log (read-only here; the waf service writes it).
+      - bastionfw-waf-audit:/var/log/waf:ro
+      # Main Caddyfile, re-sent to the waf admin API on deny-list changes.
+      - ./deploy/waf/Caddyfile:/etc/caddy/Caddyfile:ro
       - "${BASTIONFW_LOG_ROOT:-/var/log}:/host/var/log:ro"
     cap_drop:
       - ALL
@@ -39,5 +45,44 @@ services:
       retries: 3
       start_period: 10s
 
+  # Coraza WAF + OWASP CRS ingress. The image is built from
+  # deploy/waf/Dockerfile (no official corazawaf/coraza-caddy image exists on
+  # Docker Hub). WAF_MODE=detect is the safe default; block is explicit opt-in.
+  waf:
+    build:
+      context: ./deploy/waf
+    image: bastionfw-waf:local
+    restart: unless-stopped
+    ports:
+      - "${WAF_PORT:-80}:8080"
+    environment:
+      WAF_MODE: "${WAF_MODE:-detect}"
+      # The protected application behind the WAF (reverse-proxy target).
+      UPSTREAM_URL: "${UPSTREAM_URL:-http://bastionfw:8080}"
+    volumes:
+      # BastionFW rewrites engine-mode.conf (deadman fail-open) and deny.caddy
+      # (dynamic deny-list); Caddy re-reads both on each admin reload.
+      - bastionfw-waf:/var/lib/bastionfw/waf
+      - bastionfw-waf-audit:/var/log/waf
+      - ./deploy/waf/Caddyfile:/etc/caddy/Caddyfile:ro
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test:
+        - CMD
+        - wget
+        - -q
+        - -O
+        - /dev/null
+        - http://127.0.0.1:2019/config/
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
 volumes:
   bastionfw-state:
+  bastionfw-waf:
+  bastionfw-waf-audit:

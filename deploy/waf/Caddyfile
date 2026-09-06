@@ -1,0 +1,50 @@
+# BastionFW hybrid WAF ingress (Caddy + OWASP Coraza + OWASP CRS).
+#
+# - Coraza engine mode is read from /var/lib/bastionfw/waf/engine-mode.conf
+#   (SecRuleEngine On | DetectionOnly). The container entrypoint seeds it from
+#   WAF_MODE; the BastionFW deadman switch rewrites it on fail-open.
+# - The BastionFW dynamic deny-list is imported from
+#   /var/lib/bastionfw/waf/deny.caddy (a set of remote_ip matcher blocks that
+#   respond 403 before Coraza and the proxy run).
+# - Caddy's admin API listens on :2019 so BastionFW can gracefully reload the
+#   config after rewriting either shared file (no restart, no dropped traffic).
+# - Coraza JSON audit lines are appended to /var/log/waf/audit.json on the
+#   shared audit volume; BastionFW tails that file as a coraza_audit source.
+
+{
+	admin 0.0.0.0:2019
+	auto_https off
+	order coraza_waf first
+	order respond before coraza_waf
+	log {
+		output stdout
+		format console
+		level warn
+	}
+}
+
+(waf) {
+	coraza_waf {
+		load_owasp_crs
+		directives `
+Include @coraza.conf-recommended
+Include @crs-setup.conf.example
+Include @owasp_crs/*.conf
+Include /var/lib/bastionfw/waf/engine-mode.conf
+SecDefaultAction "phase:3,log,auditlog,pass"
+SecDefaultAction "phase:4,log,auditlog,pass"
+SecDefaultAction "phase:5,log,auditlog,pass"
+SecAuditEngine On
+SecAuditLog /var/log/waf/audit.json
+SecAuditLogFormat json
+SecAuditLogParts ABFHZ
+`
+	}
+}
+
+:8080 {
+	import /var/lib/bastionfw/waf/deny.caddy
+	import waf
+	# Point UPSTREAM_URL at the protected application (e.g. http://app:3000).
+	reverse_proxy {$UPSTREAM_URL:http://127.0.0.1:8080}
+}

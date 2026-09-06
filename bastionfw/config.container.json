@@ -1,0 +1,68 @@
+{
+  "log_sources": [
+    {
+      "name": "auth",
+      "path": "/host/var/log/auth.log",
+      "encoding": "utf-8",
+      "poll_interval": 0.25
+    },
+    {
+      "name": "nginx",
+      "path": "/host/var/log/nginx/access.log",
+      "encoding": "utf-8",
+      "poll_interval": 0.25
+    },
+    {
+      "name": "coraza_waf",
+      "path": "/var/log/waf/audit.json",
+      "source_type": "coraza_audit",
+      "poll_interval": 0.5
+    }
+  ],
+  "queue_size": 50000,
+  "metrics_host": "0.0.0.0",
+  "metrics_port": 9109,
+  "log_level": "INFO",
+  "log_file": "/var/lib/bastionfw/bastionfw.log",
+  "trusted_proxies": [],
+  "firewall": {
+    "enabled": false,
+    "backend": "dry-run",
+    "state_db": "/var/lib/bastionfw/firewall.sqlite3",
+    "ban_seconds": 86400,
+    "whitelist": ["127.0.0.0/8", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
+  },
+  "threat_intel": {
+    "enabled": false,
+    "cache_db": "/var/lib/bastionfw/threat-intel.sqlite3",
+    "cache_ttl_seconds": 3600,
+    "requests_per_second": 2,
+    "circuit_failure_threshold": 5,
+    "circuit_reset_seconds": 60,
+    "abuseipdb_url": ""
+  },
+  "detection": {
+    "ssh_failures": 8,
+    "ssh_window_seconds": 60,
+    "web_score_threshold": 1,
+    "session_ttl_seconds": 3600,
+    "coraza_block_score": 5
+  },
+  "waf": {
+    "enabled": false,
+    "mode": "detect",
+    "data_dir": "/var/lib/bastionfw/waf",
+    "health_url": "http://waf:8080/",
+    "health_interval_seconds": 10,
+    "failure_threshold": 3,
+    "admin_url": "http://waf:2019",
+    "caddyfile_path": "/etc/caddy/Caddyfile",
+    "rollback_command": ""
+  },
+  "alerting": {
+    "webhooks": {"high": [], "critical": []},
+    "batch_size": 20,
+    "flush_interval_seconds": 1,
+    "requests_per_second": 5
+  }
+}
