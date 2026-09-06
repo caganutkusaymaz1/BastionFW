@@ -9,8 +9,8 @@ from pathlib import Path
 from typing import BinaryIO
 
 from .config import LogSource
-from .detector import LogEvent
-from .parsing import extract_remote_ip
+from .detector import Detection, LogEvent
+from .parsing import extract_remote_ip, parse_coraza_audit_line
 
 LOGGER = logging.getLogger(__name__)
 
@@ -44,6 +44,18 @@ class AsyncLogTailer:
         self._handle: BinaryIO | None = None
         self.stop = asyncio.Event()
         self.trusted_proxies = trusted_proxies
+
+    def _emit(self, line: str) -> LogEvent:
+        """Build the LogEvent for one decoded line (branch per source_type)."""
+        if self.source.source_type == "coraza_audit":
+            detection = parse_coraza_audit_line(line)
+            ip = detection.ip if detection is not None else None
+        else:
+            detection = None
+            ip = extract_remote_ip(line, self.trusted_proxies)
+        return LogEvent(self.source.name, line,
+                        remote_ip=ip, source_type=self.source.source_type,
+                        detection=detection)
 
     async def run(self) -> None:
         while not self.stop.is_set():
@@ -108,16 +120,12 @@ class AsyncLogTailer:
         self._buffer = parts.pop()
         for raw_line in parts:
             line = raw_line.rstrip(b"\r").decode(self.source.encoding, errors="replace")
-            await self.output.put(LogEvent(self.source.name, line,
-                                           remote_ip=extract_remote_ip(
-                                               line, self.trusted_proxies)))
+            await self.output.put(self._emit(line))
 
     async def _flush_partial(self) -> None:
         if self._buffer:
             line = self._buffer.decode(self.source.encoding, errors="replace")
-            await self.output.put(LogEvent(self.source.name, line,
-                                           remote_ip=extract_remote_ip(
-                                               line, self.trusted_proxies)))
+            await self.output.put(self._emit(line))
             self._buffer = b""
 
     def close(self) -> None:

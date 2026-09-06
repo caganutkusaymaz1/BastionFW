@@ -40,6 +40,8 @@ class LogEvent:
     remote_ip: str | None = None
     user_agent: str | None = None
     request_uri: str | None = None
+    source_type: str = "text"
+    detection: "Detection | None" = None
 
 
 @dataclass(frozen=True, slots=True)

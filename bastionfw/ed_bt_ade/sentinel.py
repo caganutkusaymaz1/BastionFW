@@ -60,7 +60,12 @@ class Sentinel:
             try:
                 started = time.perf_counter()
                 self.metrics.inc("sentinel_logs_processed_total")
-                detections = self.detector.evaluate(event)
+                if event.source_type == "coraza_audit" and event.detection is not None:
+                    # Pre-parsed Coraza WAF audit event: bypass text detection
+                    # rules and enter the normal ban loop directly.
+                    detections: tuple = (event.detection,)
+                else:
+                    detections = self.detector.evaluate(event)
                 for detection in detections:
                     self.metrics.inc("sentinel_threats_detected_total",
                                      labels={"rule": detection.rule})

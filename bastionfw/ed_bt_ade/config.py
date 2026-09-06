@@ -32,6 +32,7 @@ class LogSource:
     path: Path
     encoding: str = "utf-8"
     poll_interval: float = 0.25
+    source_type: str = "text"
 
 
 @dataclass(frozen=True, slots=True)
@@ -263,10 +264,14 @@ def load_config(path: str | Path, environ: dict[str, str] | None = None) -> AppC
         if not isinstance(log_path, str) or not log_path:
             raise ConfigError(f"log_sources[{index}].path is required")
         poll = _positive(item.get("poll_interval", 0.25), "poll_interval")
+        source_type = str(item.get("source_type", "text")).strip().lower()
+        if source_type not in {"text", "coraza_audit"}:
+            raise ConfigError(
+                f"log_sources[{index}].source_type is invalid: {source_type}")
         sources.append(
             LogSource(name=name, path=Path(log_path),
                       encoding=str(item.get("encoding", "utf-8")),
-                      poll_interval=poll)
+                      poll_interval=poll, source_type=source_type)
         )
 
     raw_proxies = source.get("trusted_proxies", [])
