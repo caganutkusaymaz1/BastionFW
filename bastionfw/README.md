@@ -55,6 +55,13 @@ and certificate rotation, and fleet-level deduplication around it. The local
 agent keeps ingestion independent from threat-intelligence outages and uses
 SQLite only for local durable state.
 
+The Coraza WAF hybrid (audit-log ingestion, dynamic deny-list,
+`WafDeadmanSwitch` fail-open) is documented in the repository root
+(`THREAT_MODEL.md`, `docs/OPERATIONS.md`). Operations procedure for the
+detect → block promotion lives in `docs/OPERATIONS.md`. This package has
+not been independently audited; see the root README "Security Posture"
+section for exactly what is and is not verified.
+
 The command argument shapes in `firewall.py` are intentionally conservative
 and should be validated against the organization's existing firewall ruleset
 before enabling enforcement. In particular, use dedicated nftables/iptables
