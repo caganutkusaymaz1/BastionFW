@@ -144,6 +144,21 @@ jobs:
           artifact-name: sbom-waf.cdx.json
           upload-artifact: true
 
+      - name: Generate SBOM for Python dependencies (from hash-pinned lock)
+        run: |
+          cp bastionfw/requirements.lock /tmp/requirements.txt
+          syft scan dir:/tmp -o cyclonedx-json > sbom-python-deps.cdx.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sbom-python-deps.cdx.json
+          path: sbom-python-deps.cdx.json
+
+      - name: Trivy config scan (Dockerfile hardening lint)
+        run: |
+          curl -sL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
+          trivy config --severity HIGH,CRITICAL --exit-code 1 Dockerfile
+          trivy config --severity HIGH,CRITICAL --exit-code 1 docker-compose.yml
+
       - name: Trivy scan bastionfw image
         uses: aquasecurity/trivy-action@0.28.0
         with:
