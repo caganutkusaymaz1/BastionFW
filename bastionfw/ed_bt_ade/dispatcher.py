@@ -68,7 +68,8 @@ class WebhookDispatcher:
     def _post(url: str, alerts: list[dict[str, Any]]) -> None:
         payload = json.dumps({"alerts": alerts}, separators=(",", ":")).encode()
         request = Request(url, data=payload, headers={"Content-Type": "application/json"})
-        with urlopen(request, timeout=8):  # noqa: S310 - URL is operator configuration
+        # URL is operator configuration validated to http(s) in config.py
+        with urlopen(request, timeout=8):  # nosec B310
             return
 
     def close(self) -> None:

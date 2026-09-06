@@ -182,7 +182,8 @@ class ThreatIntelClient:
         if api_key:
             headers["Key"] = api_key
         request = Request(self.url + "?ipAddress=" + ip, headers=headers)
-        with urlopen(request, timeout=7) as response:  # noqa: S310 - configured endpoint
+        # Provider URL is operator configuration validated to http(s) in config.py
+        with urlopen(request, timeout=7) as response:  # nosec B310
             data = json.loads(response.read().decode())
         score = float(data.get("data", {}).get("abuseConfidenceScore", 0))
         return Reputation(ip, score, "abuseipdb", time.time())

@@ -78,7 +78,8 @@ async def caddy_admin_reload(admin_url: str, caddyfile_path: Path | None,
         request = Request(admin_url, data=text.encode("utf-8"),
                           method="POST",
                           headers={"Content-Type": "text/caddyfile"})
-        with urlopen(request, timeout=timeout):  # noqa: S310 - operator-configured endpoint
+        # admin_url is operator configuration validated to http(s) in config.py
+        with urlopen(request, timeout=timeout):  # nosec B310
             return
 
     try:
@@ -141,7 +142,8 @@ class WafDeadmanSwitch:
         timeout = min(max(self.config.health_interval_seconds / 2.0, 1.0), 5.0)
 
         def _get() -> None:
-            with urlopen(url, timeout=timeout):  # noqa: S310 - operator-configured endpoint
+            # health_url is operator configuration validated to http(s) in config.py
+            with urlopen(url, timeout=timeout):  # nosec B310
                 return
 
         try:
