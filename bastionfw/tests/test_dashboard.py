@@ -64,7 +64,8 @@ class DashboardAuthTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.sentinel.firewall.close()
-        self.sentinel.threat_intel.close()
+        asyncio.run_coroutine_threadsafe(
+            self.sentinel.threat_intel.close(), self._loop).result(timeout=5)
         self.server.shutdown()
         self.server.server_close()
         self._loop.call_soon_threadsafe(self._loop.stop)

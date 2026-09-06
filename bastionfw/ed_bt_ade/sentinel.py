@@ -26,6 +26,7 @@ from .logger import Health, Metrics, configure_logging, start_metrics_server
 from .rollback import WafDeadmanSwitch
 from .tailer import AsyncLogTailer
 from .threat_intel import ThreatIntelClient
+from .waf_reputation import detect_waf_reputation_driver
 
 LOGGER = logging.getLogger("ed_bt_ade")
 
@@ -50,7 +51,10 @@ class Sentinel:
             "plain": DetectionEngine(generic_rules),
             "coraza_audit": DetectionEngine((CorazaAuditRule(),)),
         }
-        self.firewall = FirewallOrchestrator(config.firewall)
+        # L7 deny-list driver stays in lock-step with the L3/L4 orchestrator.
+        self.waf_reputation = detect_waf_reputation_driver(config.waf)
+        self.firewall = FirewallOrchestrator(config.firewall,
+                                             waf=self.waf_reputation)
         self.threat_intel = ThreatIntelClient(config.threat_intel)
         self.dispatcher = WebhookDispatcher(config.alerting)
         self.deadman = (WafDeadmanSwitch(config.waf, self.metrics,
@@ -173,6 +177,9 @@ class Sentinel:
             self.dispatcher.close()
             await asyncio.gather(*tasks, return_exceptions=True)
             await self.threat_intel.close()
+            close_waf = getattr(self.waf_reputation, "close", None)
+            if close_waf is not None:
+                await close_waf() if asyncio.iscoroutinefunction(close_waf) else close_waf()
             self.firewall.close()
             if self.metrics_server:
                 self.metrics_server.shutdown()
@@ -244,6 +251,7 @@ class Sentinel:
                 "mode": self.config.waf.mode,
                 "engine_mode": waf_engine_mode,
                 "deadman_tripped": deadman_tripped,
+                "deny_list_count": self.waf_reputation.active_count(),
                 "requests_blocked": self.metrics.value("waf_requests_blocked_total"),
                 "rule_matches": self.metrics.value("waf_rule_matches_total"),
                 "top_rules": [
