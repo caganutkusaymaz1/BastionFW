@@ -240,8 +240,10 @@ class WafDeadmanSwitch:
                 LOGGER.info("WAF engine mode reasserted to %s", self.config.mode)
 
     async def run(self, stop: asyncio.Event) -> None:
+        if not self.config.enabled:
+            return
         await self._startup_reassert()
-        interval = max(self.config.health_interval_seconds, 1.0)
+        interval = max(self.config.health_interval_seconds, 0.05)
         # First probe immediately so a dead WAF fails open without waiting a
         # full interval.
         healthy = await self._probe()
