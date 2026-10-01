@@ -112,7 +112,7 @@ blocking — `continue-on-error: false`):
 | Syft CycloneDX SBOM | both images, uploaded as CI artifacts |
 | `pnpm install --frozen-lockfile` | npm supply-chain lock enforcement |
 | hash-pinned Python install (`--require-hashes`) | every Python artifact verified against its sha256 |
-| digest-pinned base image (`python:3.13-slim@sha256:9d2e…`) | upstream tag mutation impossible |
+| digest-pinned base image (`python:3.13-slim@sha256:7c61…`) | upstream tag mutation impossible |
 
 **Test coverage:** 81% (`ed_bt_ade`, 95 tests, including 7 property-based
 hypothesis tests). The CI gate is 80% — coverage may not decrease.
