@@ -27,6 +27,25 @@ MAX_CORAZA_RULE_IDS = 32
 # OWASP CRS anomaly-score style fields accepted in the Coraza audit payload.
 _CORAZA_SCORE_FIELDS = ("anomaly_score", "score", "tx.anomaly_score")
 
+# Native Coraza/CRS audit JSON (CRS v4) exposes no structured rule metadata:
+# the rule id and the anomaly score exist only inside the human-readable audit
+# message text, e.g.
+#   Coraza: Warning. Inbound Anomaly Score Exceeded (Total Score: 5)
+#   [id "949110"] [uri "/?id=1' OR '1'='1"] ...
+# so a real audit record would otherwise parse with no rule id and score 1.
+#
+# Only these *audit metadata* fields are ever scanned. Request content (uri,
+# headers, body) is attacker-controlled and is deliberately never inspected:
+# a crafted request must not be able to inject a fake rule id or inflate the
+# anomaly score that drives the ban decision.
+_CORAZA_MESSAGE_KEYS = ("error_message", "message")
+_CORAZA_RULE_ID_SCALAR_KEYS = ("rule_id", "ruleId")
+_CORAZA_TEXT_RULE_ID = re.compile(r'\[id "(\d{1,10})"\]')
+_CORAZA_TEXT_SCORE = re.compile(r"Total Score:\s*(\d{1,6})")
+# Rule messages are short; cap the scanned window to bound regex work on
+# hostile input even though the whole line is already size-limited.
+MAX_CORAZA_TEXT_SCAN = 4096
+
 
 def _json_depth(value: Any, depth: int = 0) -> int:
     if depth > MAX_CORAZA_JSON_DEPTH:
@@ -85,6 +104,19 @@ def _coraza_rule_ids(document: Any) -> tuple[str, ...]:
                 text = value.strip()
                 if text and len(text) <= 64:
                     ids.append(text)
+        # Scalar per-message rule id (Coraza emits one message per match).
+        for key in _CORAZA_RULE_ID_SCALAR_KEYS:
+            value = document.get(key)
+            if isinstance(value, (int, float)) or isinstance(value, str):
+                text = str(value).strip()
+                if text and len(text) <= 64:
+                    ids.append(text)
+        # Native audit text: the id is only present as [id "949110"].
+        for key in _CORAZA_MESSAGE_KEYS:
+            value = document.get(key)
+            if isinstance(value, str):
+                ids.extend(_CORAZA_TEXT_RULE_ID.findall(
+                    value[:MAX_CORAZA_TEXT_SCAN]))
         for child in document.values():
             if len(ids) >= MAX_CORAZA_RULE_IDS:
                 break
@@ -116,6 +148,16 @@ def _coraza_anomaly_score(document: Any) -> int:
                     return int(float(value))
                 except ValueError:
                     continue
+        # Native audit text: CRS reports the score only in the message body,
+        # e.g. "Inbound Anomaly Score Exceeded (Total Score: 5)".
+        for key in _CORAZA_MESSAGE_KEYS:
+            value = document.get(key)
+            if isinstance(value, str):
+                match = _CORAZA_TEXT_SCORE.search(value[:MAX_CORAZA_TEXT_SCAN])
+                if match:
+                    score = int(match.group(1))
+                    if score > 0:
+                        return score
         for child in document.values():
             if isinstance(child, (dict, list)):
                 found = _coraza_anomaly_score(child)
