@@ -31,6 +31,30 @@ Client → Coraza WAF (Caddy) → application (UPSTREAM_URL)
 - **Panic switch:** `python -m ed_bt_ade.sentinel --purge-all-bans` removes
   every active and expired ban from both enforcement layers immediately.
 
+## Dashboard session cookie (`Secure` flag)
+
+`POST /api/login` sets the `bastionfw_session` cookie with
+`HttpOnly; Secure; SameSite=Strict`. `Secure` means a conforming browser only
+stores and resends the cookie over HTTPS. On a plain-HTTP dashboard (for
+example a loopback-only `http://127.0.0.1:8080`) the browser therefore **drops
+the cookie after login**, and the next request arrives unauthenticated. This
+is deliberate fail-safe behavior; do not remove the flag to work around it.
+
+Supported options:
+
+1. **Terminate TLS in front of the dashboard** (recommended for any
+   network-exposed deployment). The cookie then travels over HTTPS as intended.
+2. **On a trusted loopback-only host**, skip the cookie flow and authenticate
+   every request with `Authorization: Bearer $ED_BT_ADE_DASHBOARD_TOKEN`.
+
+Verify the flag is present:
+
+```bash
+curl -si -X POST http://127.0.0.1:8080/api/login \
+  -H "Authorization: Bearer $ED_BT_ADE_DASHBOARD_TOKEN" | grep -i set-cookie
+# Set-Cookie: bastionfw_session=...; HttpOnly; Secure; Max-Age=...; Path=/; SameSite=Strict
+```
+
 ## Promoting the WAF from detect to block (safe procedure)
 
 Default is `WAF_MODE=detect`: Coraza logs attacks but does not block.
@@ -81,11 +105,71 @@ Follow every step in order; do not skip the soak period.
 
 ```bash
 bash tests/integration/test_waf_smoke.sh
+```Exercises parser-level end-to-end flow (valid audit line → detection →
+  deny-list update → expiry removal) plus the `WAF_MODE` detect/block
+  contract, without requiring a running WAF container.
+
+## WAF image verification (why `waf` is built, not `image:`)
+
+**The image the repository previously referenced does not exist.**
+`corazawaf/coraza-caddy:v2` is not published on Docker Hub — the registry API
+returns `object not found` for that repository, and `docker build` fails with
+`pull access denied for corazawaf/coraza-caddy`. The Composer `waf` service
+using `image: corazawaf/coraza-caddy:v2` could therefore never have started.
+
+Upstream reality: the OWASP Coraza Caddy module
+(`github.com/corazawaf/coraza-caddy/v2`) is distributed **as a Go plugin**, not
+as a published image. Its only bundled Dockerfile
+(`example/Dockerfile`) builds a local image from an xcaddy-compiled binary and
+bakes a **static** example Caddyfile that exposes **no** `UPSTREAM_URL` or
+`WAF_MODE` handling; the example hardcodes `:8080`, `SecRuleEngine On`, and an
+audit path under `/home/coraza/logs`.
+
+BastionFW therefore builds Caddy with the Coraza plugin from source using
+Caddy's official builder image, and the `waf` Compose service is built from
+`deploy/waf/` (`build: context: ./deploy/waf`, image tag `bastionfw-waf:local`)
+instead of a non-existent stock image. Our layer:
+
+- maps `WAF_MODE=detect` → `SecRuleEngine DetectionOnly` and
+  `WAF_MODE=block` → `SecRuleEngine On`; any other value aborts startup
+  (`deploy/waf/entrypoint.sh`);
+- reverse-proxies `UPSTREAM_URL` (default `http://app:3000`);
+- loads OWASP CRS with `load_owasp_crs` (rules are compiled into the binary);
+- writes Coraza JSON audit events to `/var/log/waf/audit.json`, the shared
+  `waf-audit` volume the engine reads **read-only**.
+
+Evidence: <https://github.com/corazawaf/coraza-caddy> — plugin syntax is a
+`coraza_waf { ... }` block inside a Caddyfile, with `load_owasp_crs` required
+for the bundled `@`-prefixed CRS paths. There is no environment-variable
+configuration path in the module.
+
+### Block-mode verification
+
+With `WAF_MODE=block` the WAF must return **403** for an obvious SQLi probe:
+
+```bash
+docker compose up -d --build waf
+curl -s -o /dev/null -w "%{http_code}\n" \
+  "http://localhost:${WAF_PORT:-8081}/?id=1' OR '1'='1"
 ```
 
-Exercises parser-level end-to-end flow (valid audit line → detection →
-deny-list update → expiry removal) without requiring a running WAF
-container.
+In `WAF_MODE=detect` the same request returns the upstream status (200) and a
+`coraza` entry appears in `/var/log/waf/audit.json` instead.
+
+A self-contained script that builds the image, deploys it against a throwaway
+upstream, and asserts both modes (then tears everything down) is available:
+
+```bash
+sh ./deploy/waf/verify-block-mode.sh
+# [waf-verify] block  benign=200  sqli=403
+# [waf-verify] detect sqli=200 (expected upstream 200)
+# [waf-verify] PASS: block=403, detect=200
+```
+
+Last verified on 2026-10-01 against Caddy 2.11.4 + OWASP CRS 4.25.0: the SQLi
+probe returned `403` (with `X-Blocked: true`) in block mode and `200` in detect
+mode, and the real audit entry (CRS rule 949110, `Inbound Anomaly Score
+Exceeded`) was written to `/var/log/waf/audit.json`.
 
 ## Env var reference (security-relevant)
 

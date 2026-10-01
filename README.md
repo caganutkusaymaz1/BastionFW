@@ -37,6 +37,21 @@ whitelist, capabilities, and rollback procedure in staging.
 The image automatically falls back to the mock firewall driver when the
 configured executable is unavailable or the container lacks privileges.
 
+### Host install without Docker (nftables backend)
+
+When running the agent directly on the host and pinning
+`firewall.backend` to `nftables`, provision the engine-owned nftables objects
+once with the idempotent helper (safe to re-run):
+
+```bash
+sudo bash bastionfw/scripts/provision-nftables.sh
+sudo nft list table inet ed_bt_ade
+```
+
+This creates `inet ed_bt_ade` with the IPv4 `blacklist` set, the `input`
+chain, and the `ip saddr @blacklist drop` rule — exactly the objects
+`ed_bt_ade/firewall.py` writes into.
+
 Never commit `.env` or place API keys in JSON configuration. Use a secret
 manager or runtime environment injection for production credentials.
 
@@ -68,6 +83,11 @@ installable through `bastionfw/pyproject.toml`.
   configuration, and tests.
 - `artifacts/api-server/`: authenticated Express API service.
 - `artifacts/bastionfw-console/`: React/Vite operations console.
+- `artifacts/mockup-sandbox/`: an isolated Vite preview harness for candidate
+  UI components. It imports the shadcn/ui primitives and a generated mockup
+  index so a design can be reviewed in a scratch route before it is promoted
+  into the operations console. It is a development-only tool: it is not part
+  of the production image or the Compose stack, and it ships no server code.
 - `lib/`: API schema, generated clients, and database packages.
 - `.github/workflows/ci.yml`: automated Python and TypeScript validation.
 

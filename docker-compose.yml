@@ -41,8 +41,14 @@ services:
 
   # Coraza WAF (OWASP CRS) reverse proxy. Default WAF_MODE=detect only logs;
   # WAF_MODE=block is an explicit operator opt-in (see docs/OPERATIONS.md).
+  #
+  # The stock corazawaf/coraza-caddy:v2 image has no UPSTREAM_URL / WAF_MODE
+  # handling, so we layer deploy/waf/{Dockerfile,Caddyfile,entrypoint.sh} on
+  # top of it (see docs/OPERATIONS.md "WAF image verification").
   waf:
-    image: corazawaf/coraza-caddy:v2
+    build:
+      context: ./deploy/waf
+    image: bastionfw-waf:local
     restart: unless-stopped
     depends_on:
       bastionfw:

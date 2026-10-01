@@ -9,8 +9,12 @@ Fail-safe design (fail-open for the operator):
   hung, or been stopped for longer than the rollback window, the script
   removes all engine-owned nftables/iptables rules. It runs without Python
   and without any part of BastionFW being alive.
-- ``FirewallOrchestrator`` also auto-rolls-back every ban at graceful
-  shutdown, so a normal stop never leaves rules behind.
+- At graceful shutdown ``RollbackCoordinator`` drains only *expired* bans
+  (via ``FirewallOrchestrator.unblock_expired``); bans whose TTL has not run
+  out are intentionally preserved and reloaded on the next start. Only the
+  external root watchdog, and only after a crash/hang, clears **all** engine
+  bans unconditionally. A plain stop therefore does leave active DROP rules
+  in place.
 
 Every address recorded to the OS by ``CommandFirewallDriver`` has already
 passed ``FirewallOrchestrator._allowed()`` vetting, so the rollback targets
@@ -253,13 +257,21 @@ def provision_rollback_script(path: Path, state_dir: Path,
 
 
 class RollbackCoordinator:
-    """Owns graceful-shutdown rollback of every engine-owned ban."""
+    """Drains expired engine-owned bans at graceful shutdown.
+
+    Active bans are deliberately left in place; see the module docstring.
+    """
 
     def __init__(self, firewall: FirewallOrchestrator) -> None:
         self.firewall = firewall
 
     async def rollback_all_bans(self) -> int:
-        """Remove every engine-owned ban; return how many were removed."""
+        """Remove every *expired* engine-owned ban; return how many were removed.
+
+        Despite the name, still-valid bans are not touched here. Use
+        ``FirewallOrchestrator.purge_all`` (operator panic switch) to remove
+        active bans as well.
+        """
         removed = 0
         try:
             while True:

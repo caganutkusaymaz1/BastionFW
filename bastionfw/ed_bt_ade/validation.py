@@ -17,7 +17,15 @@ class NetworkRule:
     port: int | None = None
 
 
-def parse_ip(value: str, *, version: int | None = None) -> ipaddress.IPv4Address | ipaddress.IPv6Address:
+def parse_ip(value: str, *, version: int | None = None,
+             ipv6_enabled: bool = True) -> ipaddress.IPv4Address | ipaddress.IPv6Address:
+    """Parse and canonicalize an IP address.
+
+    ``ipv6_enabled=False`` refuses IPv6 outright, so callers that can only
+    enforce IPv4 (the firewall orchestrator) reject an IPv6 ban up front with
+    a clear error instead of sending it to a driver without an IPv6 set.
+    Generic parsers keep accepting IPv6 by default.
+    """
     if not isinstance(value, str) or not value or value.strip() != value:
         raise ValidationError("IP address must be a non-empty canonical string")
     try:
@@ -26,10 +34,14 @@ def parse_ip(value: str, *, version: int | None = None) -> ipaddress.IPv4Address
         raise ValidationError("invalid IP address") from exc
     if version is not None and address.version != version:
         raise ValidationError(f"IPv{version} address required")
+    if address.version == 6 and not ipv6_enabled:
+        raise ValidationError("IPv6 is disabled; an IPv4 address is required")
     return address
 
 
-def parse_network(value: str, *, version: int | None = None) -> ipaddress.IPv4Network | ipaddress.IPv6Network:
+def parse_network(value: str, *, version: int | None = None,
+                  ipv6_enabled: bool = True) -> ipaddress.IPv4Network | ipaddress.IPv6Network:
+    """Parse a canonical network. ``ipv6_enabled=False`` refuses IPv6."""
     if not isinstance(value, str) or not value or value.strip() != value:
         raise ValidationError("network must be a non-empty canonical string")
     try:
@@ -38,6 +50,8 @@ def parse_network(value: str, *, version: int | None = None) -> ipaddress.IPv4Ne
         raise ValidationError("network must use canonical address/prefix notation") from exc
     if version is not None and network.version != version:
         raise ValidationError(f"IPv{version} network required")
+    if network.version == 6 and not ipv6_enabled:
+        raise ValidationError("IPv6 is disabled; an IPv4 network is required")
     return network
 
 

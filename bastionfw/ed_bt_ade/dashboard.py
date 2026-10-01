@@ -41,6 +41,20 @@ LOGIN_PATH = "/api/login"
 SESSION_COOKIE = "bastionfw_session"
 SESSION_MAX_AGE_SECONDS = 8 * 3600
 
+
+def session_cookie_header(value: str) -> str:
+    """Build the ``Set-Cookie`` value for a successful dashboard login.
+
+    ``Secure`` is always set: the cookie must only ever travel over TLS. The
+    dashboard is intended to sit behind a TLS-terminating reverse proxy. On a
+    plain-HTTP loopback-only install a conforming browser will not store or
+    resend a ``Secure`` cookie, so browser logins there should instead use the
+    ``Authorization: Bearer`` header (see docs/OPERATIONS.md, "Dashboard
+    session cookie").
+    """
+    return (f"{SESSION_COOKIE}={value}; HttpOnly; Secure; "
+            f"Max-Age={SESSION_MAX_AGE_SECONDS}; Path=/; SameSite=Strict")
+
 # Login rate limiting (Task C hardening): sliding window per client IP.
 LOGIN_MAX_FAILURES = 5
 LOGIN_LOCKOUT_SECONDS = 60
@@ -208,9 +222,7 @@ def start_dashboard_server(host: str, port: int, sentinel: Sentinel,
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json; charset=utf-8")
                 self.send_header("Set-Cookie",
-                                 f"{SESSION_COOKIE}={cookie_value}; HttpOnly; "
-                                 f"Max-Age={SESSION_MAX_AGE_SECONDS}; Path=/; "
-                                 "SameSite=Strict")
+                                 session_cookie_header(cookie_value))
                 body = b'{"authenticated": true}\n'
             elif status == 200:
                 self.send_response(200)

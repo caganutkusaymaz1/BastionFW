@@ -1,0 +1,17 @@
+[Unit]
+Description=BastionFW liveness watchdog (Python-native; alternative to the sh deadman)
+After=multi-user.target
+
+# Install EITHER this unit + ed-bt-ade-liveness.timer, OR
+# ed-bt-ade-rollback.service + .timer -- never both. See docs/OPERATIONS.md §6.1.
+# On expiry the CLI calls FirewallOrchestrator.purge_all() and removes the
+# liveness file (equivalent rollback to the generated POSIX-sh watchdog).
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 -m ed_bt_ade.liveness --state-dir /var/lib/bastionfw --max-age 120
+User=root
+Nice=10
+# nft/iptables execution needs CAP_NET_ADMIN; nothing else.
+CapabilityBoundingSet=CAP_NET_ADMIN
+AmbientCapabilities=CAP_NET_ADMIN

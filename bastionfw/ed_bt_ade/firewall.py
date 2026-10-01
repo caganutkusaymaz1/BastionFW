@@ -197,10 +197,31 @@ class FirewallOrchestrator:
 
     def _allowed(self, value: str) -> bool:
         try:
-            network = parse_ip(value)
+            address = parse_ip(value, ipv6_enabled=self.config.ipv6_enabled)
         except ValueError:
+            # IPv6 is detected and rejected explicitly (never silently handed
+            # to an IPv4-only driver). Distinguish it from other invalid input
+            # so operators can see why an observed attacker was not banned.
+            try:
+                candidate = parse_ip(value)
+            except ValueError:
+                return False
+            if candidate.version == 6:
+                LOGGER.warning(
+                    "firewall rejected IPv6 address: enforcement is IPv4-only "
+                    "(firewall.ipv6_enabled=%s)",
+                    self.config.ipv6_enabled,
+                    extra={"event": "firewall_ipv6_rejected", "ip": value})
             return False
-        if network.version != 4 or not network.is_global:
+        if address.version != 4:
+            # Only reachable if ipv6_enabled was set true; there is no IPv6 set
+            # to target, so refuse rather than misfire into the IPv4 set.
+            LOGGER.warning(
+                "IPv6 enforcement is not implemented; refusing to ban %s",
+                address,
+                extra={"event": "firewall_ipv6_unsupported", "ip": str(address)})
+            return False
+        if not address.is_global:
             return False
         forbidden = (
             parse_network("127.0.0.0/8"),
@@ -209,9 +230,9 @@ class FirewallOrchestrator:
             parse_network("192.168.0.0/16"),
             parse_network("169.254.0.0/16"),
         )
-        if any(network in item for item in forbidden):
+        if any(address in item for item in forbidden):
             return False
-        return not any(network in parse_network(item)
+        return not any(address in parse_network(item)
                        for item in self.config.whitelist)
 
     async def block(self, value: str, duration: int | None = None) -> bool:
@@ -268,6 +289,15 @@ class FirewallOrchestrator:
         except Exception:  # pragma: no cover - best-effort second layer
             LOGGER.exception("waf deny-list remove failed",
                              extra={"event": "waf_remove_error", "ip": address})
+
+    def snapshot_bans(self) -> list[tuple[str, float]]:
+        """Return ``(address, expires_at)`` for every recorded ban, sorted.
+
+        Public read accessor for the bulk export CLI (``ed_bt_ade.lists``);
+        callers must not reach into the SQLite handle directly.
+        """
+        return [(row[0], row[1]) for row in self._db.execute(
+            "SELECT address, expires_at FROM bans ORDER BY address")]
 
     async def purge_all(self) -> int:
         """Immediately remove every ban, expired or still active.
