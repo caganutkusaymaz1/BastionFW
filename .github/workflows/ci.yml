@@ -166,7 +166,7 @@ jobs:
           trivy config --severity HIGH,CRITICAL --exit-code 1 docker-compose.yml
 
       - name: Trivy scan bastionfw image
-        uses: aquasecurity/trivy-action@v0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: bastionfw:latest
           severity: HIGH,CRITICAL
@@ -174,7 +174,7 @@ jobs:
           ignore-unfixed: true
 
       - name: Trivy scan waf image
-        uses: aquasecurity/trivy-action@v0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: waf:latest
           severity: HIGH,CRITICAL
