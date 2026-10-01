@@ -171,6 +171,30 @@ probe returned `403` (with `X-Blocked: true`) in block mode and `200` in detect
 mode, and the real audit entry (CRS rule 949110, `Inbound Anomaly Score
 Exceeded`) was written to `/var/log/waf/audit.json`.
 
+### WAF audit → engine feedback loop
+
+The engine ingests Coraza audit JSON (`log_sources[].source_type =
+"coraza_audit"`) and a confirmed OWASP CRS match drives the L3/L4 ban loop:
+
+| Audit record | Parsed as | Bans? |
+|---|---|---|
+| CRS rule ids + anomaly score ≥ 5 | `coraza_waf_match`, severity `high` | yes |
+| CRS rule ids, anomaly score 1–4 | `coraza_waf_match`, severity `medium` | no — alert only |
+| no rule ids parsed | `coraza_audit`, severity `low` | no — alert only |
+
+Native CRS audit JSON carries no structured `rule_id` / `anomaly_score` fields;
+both are extracted from the bounded `messages[].error_message` audit text (CRS
+threshold of 5 is the "critical" boundary). Request content (uri, headers,
+body) is **never** scanned for this, so a crafted request cannot inject a fake
+rule id or inflate the score that drives the ban decision.
+
+> **Operator caveat — client address fidelity.** The banned address comes from
+> `transaction.client_ip`. If the WAF sits behind another reverse proxy or CDN,
+> that field can be the *proxy's* address. BastionFW's safety policy still
+> refuses private/loopback/reserved addresses, but a **public** front-end proxy
+> or CDN egress address would be ban-able. Add every front-end proxy/CDN egress
+> address to `firewall.whitelist` before setting `firewall.enabled=true`.
+
 ## Env var reference (security-relevant)
 
 | Variable | Purpose |

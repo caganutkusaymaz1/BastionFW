@@ -409,8 +409,9 @@ class SentinelLifecycleTests(unittest.TestCase):
                     "client_ip": "9.9.9.9", "anomaly_score": 9,
                     "rule_ids": ["942100"]}))
                 self.assertIsNotNone(detection)
-                # Only ssh_brute_force can ban locally; coraza detections are
-                # observable (alert path) but must not crash the loop.
+                # A confirmed CRS match (rule id + anomaly score >= 5) is a
+                # blocking signal, so it now reaches the ban loop as well as
+                # the alert path, without crashing the loop.
                 event = LogEvent("waf", json.dumps({"client_ip": "9.9.9.9"}),
                                  remote_ip="9.9.9.9", source_type="coraza_audit",
                                  detection=detection)
@@ -421,6 +422,9 @@ class SentinelLifecycleTests(unittest.TestCase):
                 await asyncio.wait_for(task, timeout=2)
                 self.assertEqual(sentinel.metrics.value(
                     "sentinel_logs_processed_total"), 1.0)
+                self.assertIn("9.9.9.9", sentinel.firewall._blocked)
+                self.assertEqual(sentinel.metrics.value(
+                    "sentinel_ips_blocked_total"), 1.0)
                 sentinel.firewall.close()
                 sentinel.threat_intel.cache.db.close()
 

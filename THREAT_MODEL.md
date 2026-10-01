@@ -49,7 +49,9 @@ the hardening round. No claim is made about anything not in the code.
 - **Ban universe:** every address recorded to the OS passed
   `FirewallOrchestrator._allowed()` — canonical `ipaddress` parsing,
   IPv4-only, `is_global`, not loopback/private/link-local, not whitelisted.
-  Non-canonical input is rejected before it can reach argv.
+  Non-canonical input is rejected before it can reach argv. This covers both
+  ban sources: SSH brute-force detections and confirmed OWASP CRS WAF audit
+  matches (`coraza_waf_match`, anomaly score ≥ 5).
 - **Rollback window:** liveness file renewed ≥6×/window while the event loop
   is healthy; external watchdog rolls back if renewals stop. Window is
   operator-tunable via `ED_BT_ADE_ROLLBACK_SECONDS`.
@@ -60,6 +62,12 @@ the hardening round. No claim is made about anything not in the code.
 - **Bounded parsing:** log lines capped at 1 MiB buffered, detection input
   at 64 KiB, Coraza JSON depth ≤ 64, rule IDs ≤ 32; all with defined
   rejection behavior (no crashes).
+- **WAF audit is untrusted input:** native Coraza audit JSON has no structured
+  rule metadata, so rule ids and the anomaly score are extracted from the
+  bounded `messages[].error_message` audit text. Only that audit metadata is
+  ever scanned — attacker-controlled request content (uri, headers, body) is
+  never inspected, so a crafted request cannot forge a rule id or inflate the
+  score that gates a ban.
 - **SSRF:** operator-configured outbound URLs (threat-intel, webhooks) must
   be HTTP(S), credential-free, and non-private unless the host is listed in
   `waf.trusted_internal_hosts`.
@@ -84,6 +92,11 @@ the hardening round. No claim is made about anything not in the code.
   (`AlertingConfig.webhooks`); there is no built-in email/SMS path.
 - **Multi-host coordination.** Each engine instance protects its own host;
   there is no cluster-wide state sync.
+- **WAF client-address fidelity.** WAF-driven bans use
+  `transaction.client_ip`. Behind an additional reverse proxy or CDN that
+  field can be the proxy's address; private/loopback addresses are rejected,
+  but a public front-end proxy egress address is ban-able unless the operator
+  lists it in `firewall.whitelist`.
 
 ## Known limitations (disclosed honestly)
 

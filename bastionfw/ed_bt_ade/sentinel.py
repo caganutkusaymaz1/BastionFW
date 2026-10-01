@@ -24,6 +24,17 @@ from .threat_intel import ThreatIntelClient
 
 LOGGER = logging.getLogger("ed_bt_ade")
 
+# Detections strong enough on their own to trigger a ban when threat
+# intelligence is unavailable or scores the address below the threshold.
+#
+# ``ssh_brute_force`` is the original local signal. ``coraza_waf_match`` is
+# emitted only when the audit record carried real OWASP CRS rule ids *and* a
+# CRS anomaly score of at least 5 (the "critical" threshold), so the WAF feed
+# can drive L3/L4 enforcement too. A bare ``coraza_audit`` event (no rule ids
+# parsed) and the text web rules stay alert-only, so CRS false positives remain
+# observable without causing a self-inflicted denial of service.
+BLOCKING_DETECTION_RULES = frozenset({"ssh_brute_force", "coraza_waf_match"})
+
 
 class Sentinel:
     def __init__(self, config: AppConfig) -> None:
@@ -95,9 +106,9 @@ class Sentinel:
                     })
                     if detection.ip and detection.severity == "high":
                         reputation = await self.threat_intel.lookup(detection.ip)
-                        # Only the strongest local signal can trigger a ban when
+                        # Only the strongest local signals can trigger a ban when
                         # TI is unavailable; ambiguous detections stay observable.
-                        should_block = detection.rule == "ssh_brute_force" and (
+                        should_block = detection.rule in BLOCKING_DETECTION_RULES and (
                             reputation is None or reputation.score >= 50)
                         if should_block and await self.firewall.block(detection.ip):
                             self.metrics.inc("sentinel_ips_blocked_total")
