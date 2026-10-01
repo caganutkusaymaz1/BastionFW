@@ -36,9 +36,17 @@ bash demo-events.sh
 ```
 
 Copy `config.example.json` to a host-specific file before deployment, or use
-`config.production.example.json` with the provided systemd unit. Set
-`firewall.enabled` to `true` only after validating the driver and whitelist in
-a staging environment. `ED_BT_ADE_DRY_RUN=true` always forces dry-run mode.
+`config.production.example.json` with the provided systemd unit. Before
+enabling the `nftables` backend, provision the engine-owned objects once (the
+script is idempotent and safe to re-run):
+
+```bash
+sudo bash scripts/provision-nftables.sh
+sudo nft list table inet ed_bt_ade
+```
+
+Set `firewall.enabled` to `true` only after validating the driver and whitelist
+in a staging environment. `ED_BT_ADE_DRY_RUN=true` always forces dry-run mode.
 `deploy/ed-bt-ade.service` is a hardened starting point for a Linux systemd
 deployment; review filesystem permissions, capabilities, and log paths with
 the host administrator before installing it.
@@ -66,6 +74,21 @@ The command argument shapes in `firewall.py` are intentionally conservative
 and should be validated against the organization's existing firewall ruleset
 before enabling enforcement. In particular, use dedicated nftables/iptables
 sets in production rather than changing a default chain ad hoc.
+
+## Operator tooling
+
+Bulk ban-list import/export (CSV or JSON) is available as a module or the
+installed `bastionfw-lists` console script:
+
+```bash
+python -m ed_bt_ade.lists export --format csv  --output bans.csv
+python -m ed_bt_ade.lists import --format json --input bans.json
+```
+
+Imports pass through the same safety vetting as the live pipeline (only
+public, non-whitelisted IPv4 addresses). A Prometheus-ready Grafana dashboard
+for the `/metrics` endpoint ships as `deploy/grafana-dashboard.json`; see
+`docs/OPERATIONS.md` §6.2–6.3.
 
 ## Extension points
 

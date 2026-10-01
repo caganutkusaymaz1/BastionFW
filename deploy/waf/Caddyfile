@@ -1,0 +1,41 @@
+# BastionFW Coraza/Caddy WAF configuration.
+#
+# Layered on top of corazawaf/coraza-caddy:v2, which ships no operative
+# UPSTREAM_URL / WAF_MODE handling (see docs/OPERATIONS.md "WAF image
+# verification"). Placeholders are substituted by Caddy from the environment
+# the entrypoint exports:
+#
+#   {$UPSTREAM_URL}  application to reverse-proxy (default http://app:3000)
+#   {$WAF_ENGINE}    SecRuleEngine value: DetectionOnly (detect) or On (block)
+#
+# OWASP CRS is compiled into the binary; `load_owasp_crs` makes the bundled
+# @-prefixed rule paths resolvable without mounting any rule files.
+{
+    auto_https off
+    order coraza_waf first
+}
+
+:8080 {
+    coraza_waf {
+        load_owasp_crs
+        directives `
+Include @coraza.conf-recommended
+Include @crs-setup.conf.example
+Include @owasp_crs/*.conf
+SecRuleEngine {$WAF_ENGINE}
+SecRequestBodyAccess On
+SecResponseBodyAccess Off
+SecAuditEngine RelevantOnly
+SecAuditLog /var/log/waf/audit.json
+SecAuditLogFormat json
+SecAuditLogParts ABCFHZ
+`
+    }
+
+    handle_errors 403 {
+        header X-Blocked "true"
+        respond "Request blocked by BastionFW WAF" 403
+    }
+
+    reverse_proxy {$UPSTREAM_URL}
+}

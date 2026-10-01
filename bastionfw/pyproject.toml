@@ -18,6 +18,7 @@ dependencies = [
 [project.scripts]
 bastionfw = "ed_bt_ade.sentinel:main"
 ed-bt-ade = "ed_bt_ade.sentinel:main"
+bastionfw-lists = "ed_bt_ade.lists:main"
 
 [tool.setuptools.packages.find]
 include = ["ed_bt_ade*"]

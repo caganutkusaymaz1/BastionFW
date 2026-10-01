@@ -122,8 +122,14 @@ jobs:
           tags: bastionfw:latest
           load: true
 
-      - name: Build waf image (digest-pinned Coraza upstream)
-        run: docker pull corazawaf/coraza-caddy:v2 && docker tag corazawaf/coraza-caddy:v2 waf:latest
+      - name: Build waf image (BastionFW Coraza layer)
+        uses: docker/build-push-action@v6
+        with:
+          context: ./deploy/waf
+          file: ./deploy/waf/Dockerfile
+          push: false
+          tags: waf:latest
+          load: true
 
       - name: Install Syft (SBOM)
         uses: anchore/sbom-action/download-syft@v0

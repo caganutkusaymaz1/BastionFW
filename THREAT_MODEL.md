@@ -75,9 +75,11 @@ the hardening round. No claim is made about anything not in the code.
 - **Host malware / insider threats.** An operator with root on the host can
   disable the engine, edit configs, and read state. BastionFW is a
   defense-in-depth layer, not tamper-proof.
-- **IPv6 banning.** Enforcement accepts IPv4 addresses only
-  (`firewall.py`: `network.version != 4 → reject`); IPv6 is parsed
-  safely but never banned.
+- **IPv6 banning.** Enforcement accepts IPv4 addresses only. IPv6
+  addresses are parsed safely but never banned: `FirewallConfig.ipv6_enabled`
+  defaults to `false`, and `FirewallOrchestrator._allowed()` explicitly
+  rejects and logs IPv6 (`firewall_ipv6_rejected`) instead of forwarding it to
+  the IPv4-only driver. See `docs/OPERATIONS.md` § 8.
 - **Email/pager alerting.** Alerting is webhook-based only
   (`AlertingConfig.webhooks`); there is no built-in email/SMS path.
 - **Multi-host coordination.** Each engine instance protects its own host;

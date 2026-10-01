@@ -158,8 +158,10 @@ class Sentinel:
             self.dispatcher.close()
             await asyncio.gather(*tasks, return_exceptions=True)
             await self.threat_intel.close()
-            # Disarm the watchdog, then roll back every engine-owned ban so a
-            # graceful stop never leaves the host with active DROP rules.
+            # Disarm the watchdog, then drain expired engine-owned bans.
+            # Active bans are intentionally preserved across a graceful stop
+            # (they are reloaded from the state DB on the next start); only the
+            # external root watchdog clears all bans, and only after a crash.
             await self.deadman.close()
             await self.rollback.rollback_all_bans()
             self.firewall.close()

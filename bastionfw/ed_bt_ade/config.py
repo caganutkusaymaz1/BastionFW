@@ -42,6 +42,11 @@ class FirewallConfig:
     state_db: Path = Path("state/firewall.sqlite3")
     ban_seconds: int = 86_400
     whitelist: tuple[str, ...] = ()
+    # IPv4-only by deliberate decision (see docs/OPERATIONS.md "IPv6"):
+    # IPv6 is parsed safely but never enforced. When False (default) the
+    # orchestrator rejects IPv6 ban attempts explicitly and logs them instead
+    # of handing an address to a driver that only has an IPv4 set.
+    ipv6_enabled: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -205,6 +210,7 @@ def provision_default_config(path: str | Path) -> Path:
             "state_db": "state/firewall.sqlite3",
             "ban_seconds": 86400,
             "whitelist": ["127.0.0.0/8", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"],
+            "ipv6_enabled": False,
         },
         "threat_intel": {
             "enabled": False,
@@ -307,6 +313,8 @@ def load_config(path: str | Path, environ: dict[str, str] | None = None) -> AppC
         ban_seconds=_positive(firewall_raw.get("ban_seconds", 86_400),
                                "firewall.ban_seconds", integer=True),
         whitelist=tuple(whitelist),
+        ipv6_enabled=_as_bool(firewall_raw.get("ipv6_enabled", False),
+                              "firewall.ipv6_enabled"),
     )
 
     waf_raw = _mapping(source.get("waf", {}), "waf")
@@ -389,7 +397,8 @@ def load_config(path: str | Path, environ: dict[str, str] | None = None) -> AppC
         firewall=FirewallConfig(enabled=enabled, backend=firewall.backend,
                                 state_db=firewall.state_db,
                                 ban_seconds=firewall.ban_seconds,
-                                whitelist=firewall.whitelist),
+                                whitelist=firewall.whitelist,
+                                ipv6_enabled=firewall.ipv6_enabled),
         threat_intel=ti,
         detection=detection,
         alerting=alerting,

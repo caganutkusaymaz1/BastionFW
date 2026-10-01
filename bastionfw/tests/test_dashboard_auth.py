@@ -5,6 +5,7 @@ from ed_bt_ade.dashboard import (
     is_authorized,
     resolve_bind_host,
     resolve_dashboard_token,
+    session_cookie_header,
 )
 
 
@@ -47,6 +48,16 @@ class DashboardAuthTests(unittest.TestCase):
     def test_token_allows_requested_bind_host(self) -> None:
         self.assertEqual(resolve_bind_host("0.0.0.0", "secret"), "0.0.0.0")
         self.assertEqual(resolve_bind_host("127.0.0.1", "secret"), "127.0.0.1")
+
+    def test_session_cookie_is_hardened(self) -> None:
+        header = session_cookie_header("sometoken")
+        self.assertIn("bastionfw_session=sometoken", header)
+        self.assertIn("HttpOnly", header)
+        # Secure must always be present so the cookie is TLS-only.
+        self.assertIn("Secure", header)
+        self.assertIn("SameSite=Strict", header)
+        self.assertIn("Path=/", header)
+        self.assertIn("Max-Age=", header)
 
 
 if __name__ == "__main__":

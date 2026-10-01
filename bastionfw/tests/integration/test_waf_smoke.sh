@@ -113,4 +113,25 @@ async def main() -> None:
 asyncio.run(main())
 PY
 
+echo "[waf-smoke] 5/5 WAF_MODE detect/block contract"
+python3 - <<'PY'
+from pathlib import Path
+
+# The script cd's to the bastionfw/ package root before this step runs;
+# deploy/waf lives one level up at the repository root.
+waf_dir = Path("..") / "deploy" / "waf"
+entrypoint = (waf_dir / "entrypoint.sh").read_text(encoding="utf-8")
+caddyfile = (waf_dir / "Caddyfile").read_text(encoding="utf-8")
+
+# detect is a no-op (DetectionOnly), block is enforcement (On).
+assert 'ENGINE="DetectionOnly"' in entrypoint
+assert 'ENGINE="On"' in entrypoint
+# The engine placeholder carries the mode; the Caddyfile never hardcodes On.
+assert "{$WAF_ENGINE}" in caddyfile
+assert "SecRuleEngine On" not in caddyfile
+# Both modes audited to the engine-readable JSON path.
+assert "SecAuditLog /var/log/waf/audit.json" in caddyfile
+print("WAF_MODE=detect -> DetectionOnly, WAF_MODE=block -> On (audited)")
+PY
+
 echo "[waf-smoke] PASS"
