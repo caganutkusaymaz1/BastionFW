@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BastionFW v3.2.1 — Defensive Linux Security Platform</title>
+<meta name="description" content="BastionFW defensive log analyzer and active-defense engine. Current on main: v3.2.1.">
+<style>
+:root{
+  --bg:#0b0f14; --panel:#111821; --panel2:#0e141c; --line:#1e2a38;
+  --fg:#e6edf3; --muted:#8ba0b3; --accent:#39d0d8; --accent2:#f0b429; --ok:#3fb950;
+}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{background:radial-gradient(1200px 600px at 80% -10%, #12303a 0%, transparent 55%), var(--bg);
+  color:var(--fg); font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;}
+a{color:var(--accent);text-decoration:none}
+a:hover{text-decoration:underline}
+.wrap{max-width:1020px;margin:0 auto;padding:0 20px}
+header{padding:64px 0 40px}
+.badge{display:inline-flex;gap:8px;align-items:center;border:1px solid var(--line);background:var(--panel);
+  color:var(--muted);border-radius:999px;padding:6px 14px;font-size:13px;letter-spacing:.04em}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--ok);box-shadow:0 0 10px var(--ok)}
+h1{font-size:clamp(34px,6vw,58px);line-height:1.05;margin:18px 0 10px;letter-spacing:-.02em}
+h1 span{color:var(--accent)}
+.lead{color:var(--muted);font-size:clamp(17px,2.4vw,20px);max-width:62ch}
+.cta{display:flex;gap:12px;flex-wrap:wrap;margin-top:26px}
+.btn{display:inline-block;padding:11px 18px;border-radius:10px;border:1px solid var(--line);
+  background:var(--panel);color:var(--fg);font-weight:600}
+.btn.primary{background:linear-gradient(180deg,#39d0d8,#25a9b1);border-color:transparent;color:#04262a}
+.btn:hover{text-decoration:none;transform:translateY(-1px)}
+section{padding:34px 0;border-top:1px solid var(--line)}
+h2{font-size:14px;text-transform:uppercase;letter-spacing:.14em;color:var(--muted);margin:0 0 18px}
+.grid{display:grid;gap:16px;grid-template-columns:repeat(auto-fit,minmax(240px,1fr))}
+.card{background:linear-gradient(180deg,var(--panel),var(--panel2));border:1px solid var(--line);
+  border-radius:14px;padding:20px}
+.card h3{margin:0 0 8px;font-size:17px}
+.card p{margin:0;color:var(--muted);font-size:14.5px}
+code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px;
+  background:#0a1017;border:1px solid var(--line);border-radius:6px;padding:2px 6px}
+.stat{display:flex;gap:26px;flex-wrap:wrap;margin-top:6px}
+.stat b{display:block;font-size:26px;color:var(--accent)}
+.stat span{color:var(--muted);font-size:13px}
+.note{border-left:3px solid var(--accent2);padding-left:14px;color:var(--muted);margin:0}
+footer{padding:40px 0 60px;color:var(--muted);font-size:13.5px}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <span class="badge"><span class="dot"></span> v3.2.1 &mdash; current on main</span>
+  <h1>Bastion<span>FW</span></h1>
+  <p class="lead">A defensive Linux security platform: tail security logs, detect SSH and web attacks,
+  stage temporary firewall bans, and expose an operator dashboard and Prometheus metrics.</p>
+  <div class="cta">
+    <a class="btn primary" href="https://github.com/caganutkusaymaz1/BastionFW">View source on main</a>
+    <a class="btn" href="https://github.com/caganutkusaymaz1/BastionFW/blob/main/CHANGELOG.md">Changelog</a>
+    <a class="btn" href="https://github.com/caganutkusaymaz1/BastionFW/blob/main/bastionfw/README.md">README</a>
+  </div>
+</header>
+
+<section>
+  <h2>What it does</h2>
+  <div class="grid">
+    <div class="card"><h3>Log analysis</h3><p>Tails auth and web logs with an inode-aware async tailer and a 1&nbsp;MiB buffer cap.</p></div>
+    <div class="card"><h3>Detection</h3><p>SSH brute-force and web-attack rules, plus native Coraza/CRS audit ingestion with a confirmed-match ban loop.</p></div>
+    <div class="card"><h3>Firewall enforcement</h3><p>nftables / iptables / ufw / firewalld backends, IPv4-only by policy, with a panic purge switch.</p></div>
+    <div class="card"><h3>WAF sidecar</h3><p>Coraza + OWASP CRS in detect/block modes with bi-directional deny-list sync and a fail-open deadman switch.</p></div>
+    <div class="card"><h3>Operations</h3><p>Bearer/cookie dashboard auth, Prometheus metrics, a Grafana dashboard, and a liveness watchdog.</p></div>
+    <div class="card"><h3>Supply chain</h3><p>Hash-pinned Python lock, digest-pinned image, SBOM, and Trivy HIGH/CRITICAL gating in CI.</p></div>
+  </div>
+</section>
+
+<section>
+  <h2>v3.2.1 &mdash; SSRF hostname-resolution fix</h2>
+  <p class="note"><code>_validated_url()</code> now resolves hostnames via <code>socket.getaddrinfo()</code>
+  and rejects any URL whose host resolves to a private, loopback, link-local, reserved, or cloud-metadata
+  range &mdash; closing the classic <em>localhost / DNS-rebinding</em> SSRF bypass. Resolution failures are
+  rejected too. The <code>waf.trusted_internal_hosts</code> allowlist is still honoured first, so trusted
+  internal service names need no DNS lookup.</p>
+</section>
+
+<section>
+  <h2>Verified</h2>
+  <div class="stat">
+    <div><b>135</b><span>unit tests (unittest)</span></div>
+    <div><b>142</b><span>tests (pytest)</span></div>
+    <div><b>83.78%</b><span>coverage (gate 80%)</span></div>
+    <div><b>0</b><span>bandit findings</span></div>
+  </div>
+</section>
+
+<footer>
+  <p>Repository: <a href="https://github.com/caganutkusaymaz1/BastionFW">caganutkusaymaz1/BastionFW</a>
+  &mdash; source is browsable directly on <code>main</code> (no zip).</p>
+  <p>BastionFW is host-local by design; read <code>THREAT_MODEL.md</code> before high-risk use.</p>
+</footer>
+</div>
+</body>
+</html>
