@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.2.1] — SSRF hostname-resolution fix
+
+### Security
+
+- **`_validated_url()` skipped its range checks for hostnames (SSRF).** When
+  a configured URL host was a *name* rather than a literal IP (`localhost`,
+  `internal-api.corp`, or any domain — including an attacker-controlled one —
+  resolving to `169.254.169.254` or a private range), `ipaddress.ip_address()`
+  raised `ValueError`, the address stayed `None`, and the private/loopback/
+  link-local/reserved/multicast rejection was skipped entirely, so the URL was
+  accepted. Hosts used by `threat_intel.abuseipdb_url` and
+  `alerting.webhooks.*` are now resolved with `socket.getaddrinfo()` (stdlib,
+  no new dependency) and **every** returned IPv4/IPv6 address is run through
+  the same range checks; any private/loopback/link-local/reserved result is
+  rejected. Resolution failures (`socket.gaierror`) are rejected with a clear
+  `ConfigError` rather than silently accepted (a name could resolve to an
+  internal address later, at request time). The `waf.trusted_internal_hosts`
+  allowlist is still checked first, so explicitly trusted internal service
+  names need no DNS lookup and offline/air-gapped configs keep working. DNS
+  now runs at config-load time, which is infrequent and acceptable. Covered by
+  `tests/test_security.py` (`SecurityRegressionTests.test_ssrf_*`).
+
 ## [3.2.0] — WAF enforcement hardening & operator tooling
 
 ### Security
@@ -136,7 +158,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Threat-intel URL encoding hardening (canonical IP re-validation before
   any outbound request).
 
-[Unreleased]: https://github.com/caganutkusaymaz1/BastionFW/compare/v3.2.0...HEAD
+[Unreleased]: https://github.com/caganutkusaymaz1/BastionFW/compare/v3.2.1...HEAD
+[3.2.1]: https://github.com/caganutkusaymaz1/BastionFW/compare/v3.2.0...v3.2.1
 [3.2.0]: https://github.com/caganutkusaymaz1/BastionFW/compare/v3.1.0...v3.2.0
 [3.1.0]: https://github.com/caganutkusaymaz1/BastionFW/compare/v3.0.0...v3.1.0
 [3.0.x]: https://github.com/caganutkusaymaz1/BastionFW/releases/tag/v3.0.0
