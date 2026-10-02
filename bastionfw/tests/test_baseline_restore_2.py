@@ -5,6 +5,7 @@ import threading
 import unittest
 import urllib.request
 from pathlib import Path
+from unittest.mock import patch
 
 from ed_bt_ade.config import ConfigError, _validated_url
 from ed_bt_ade.dashboard import (
@@ -21,10 +22,16 @@ from ed_bt_ade.config import AppConfig, FirewallConfig, LogSource, ThreatIntelCo
 
 class ValidatedUrlSsrfTests(unittest.TestCase):
     def test_public_urls_accepted(self) -> None:
-        self.assertEqual(_validated_url("https://api.abuseipdb.com/api/v2/check",
-                                        "k"), "https://api.abuseipdb.com/api/v2/check")
-        self.assertEqual(_validated_url("http://hooks.example.com/x", "k"),
-                         "http://hooks.example.com/x")
+        # Hostnames are now resolved at validation time, so stub the resolver
+        # to keep this test independent of real (and possibly absent) DNS.
+        def public_resolver(host, port, *args, **kwargs):
+            return [(2, 1, 6, "", ("93.184.216.34", port or 0))]
+
+        with patch("ed_bt_ade.config.socket.getaddrinfo", public_resolver):
+            self.assertEqual(_validated_url("https://api.abuseipdb.com/api/v2/check",
+                                            "k"), "https://api.abuseipdb.com/api/v2/check")
+            self.assertEqual(_validated_url("http://hooks.example.com/x", "k"),
+                             "http://hooks.example.com/x")
 
     def test_private_and_metadata_targets_rejected(self) -> None:
         for bad in ("http://169.254.169.254/latest/meta-data/",

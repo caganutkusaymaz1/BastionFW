@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import socket
 from dataclasses import dataclass, field
 from ipaddress import ip_address
 from pathlib import Path
@@ -154,18 +155,39 @@ def _validated_url(value: Any, key: str, allow_empty: bool = False,
     if parsed.username or parsed.password:
         raise ConfigError(f"{key} must not contain embedded credentials")
     hostname = (parsed.hostname or "").rstrip(".").lower()
+    # The allowlist is checked first so an explicitly trusted internal name
+    # (e.g. the compose service ``waf``) needs no DNS lookup and keeps working
+    # offline, matching the previous behaviour exactly.
     if hostname and hostname not in {host.lower() for host in trusted_internal_hosts}:
         try:
-            address = ip_address(hostname)
+            addresses = [ip_address(hostname)]
         except ValueError:
-            address = None
-        if address is not None and (not address.is_global or address.is_private
-                                    or address.is_loopback or address.is_link_local
-                                    or address.is_reserved or address.is_multicast):
-            raise ConfigError(
-                f"{key} must not target a private, loopback, link-local, or "
-                f"reserved address ({hostname}); list it in "
-                "waf.trusted_internal_hosts if this internal endpoint is intended")
+            # The host is not a literal IP, so it is a name that can point at
+            # a private/loopback/metadata range (the classic DNS-rebinding
+            # SSRF pattern). Resolve every A/AAAA record and apply the same
+            # range checks below — a name must never skip them. This runs at
+            # config-load time; load_config() is infrequent, so the extra DNS
+            # lookups are acceptable. Resolution failure is treated as unsafe
+            # (reject) rather than silently accepted: DNS could succeed later
+            # at request time and land on an internal target.
+            try:
+                addresses = [
+                    ip_address(info[4][0].split("%", 1)[0])
+                    for info in socket.getaddrinfo(hostname, None)
+                ]
+            except socket.gaierror as exc:
+                raise ConfigError(
+                    f"{key} hostname could not be resolved ({hostname}); list "
+                    "it in waf.trusted_internal_hosts if this internal "
+                    "endpoint is intended") from exc
+        for address in addresses:
+            if (not address.is_global or address.is_private
+                    or address.is_loopback or address.is_link_local
+                    or address.is_reserved or address.is_multicast):
+                raise ConfigError(
+                    f"{key} must not target a private, loopback, link-local, or "
+                    f"reserved address ({hostname}); list it in "
+                    "waf.trusted_internal_hosts if this internal endpoint is intended")
     return value
 
 

@@ -1,13 +1,20 @@
 import asyncio
 import json
 import os
+import socket
 import stat
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
-from ed_bt_ade.config import FirewallConfig, ThreatIntelConfig, load_config
+from ed_bt_ade.config import (
+    ConfigError,
+    FirewallConfig,
+    ThreatIntelConfig,
+    _validated_url,
+    load_config,
+)
 from ed_bt_ade.detector import DetectionEngine, LogEvent, WebAttackRule
 from ed_bt_ade.firewall import FirewallOrchestrator, MockFirewallDriver
 from ed_bt_ade.logger import configure_logging
@@ -115,6 +122,57 @@ class SecurityRegressionTests(unittest.TestCase):
                  parse_port(value) if value.isdigit() else parse_ip(value))
         with self.assertRaises(ValidationError):
             parse_protocol("esp")
+
+    @staticmethod
+    def _resolved(*addresses: str):
+        """Build a socket.getaddrinfo stand-in returning ``addresses``."""
+        def fake_getaddrinfo(host, port, *args, **kwargs):
+            return [
+                (socket.AF_INET6 if ":" in address else socket.AF_INET,
+                 socket.SOCK_STREAM, 6, "", (address, port or 0))
+                for address in addresses
+            ]
+        return fake_getaddrinfo
+
+    def test_ssrf_rejects_hostname_resolving_to_loopback(self) -> None:
+        with patch("ed_bt_ade.config.socket.getaddrinfo",
+                   self._resolved("127.0.0.1")):
+            with self.assertRaises(ConfigError):
+                _validated_url("http://localhost/", "k")
+
+    def test_ssrf_rejects_hostname_resolving_to_metadata(self) -> None:
+        with patch("ed_bt_ade.config.socket.getaddrinfo",
+                   self._resolved("169.254.169.254")):
+            with self.assertRaises(ConfigError):
+                _validated_url("http://some-internal-name/", "k")
+
+    def test_ssrf_rejects_hostname_that_does_not_resolve(self) -> None:
+        def failing_getaddrinfo(host, port, *args, **kwargs):
+            raise socket.gaierror("no address associated with hostname")
+
+        with patch("ed_bt_ade.config.socket.getaddrinfo", failing_getaddrinfo):
+            with self.assertRaises(ConfigError) as ctx:
+                _validated_url("http://unresolvable.invalid/", "k")
+        self.assertIn("could not be resolved", str(ctx.exception))
+
+    def test_ssrf_allowlisted_hostname_accepted_even_if_private(self) -> None:
+        resolver = Mock(return_value=[
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("10.0.0.5", 0)),
+        ])
+        with patch("ed_bt_ade.config.socket.getaddrinfo", resolver):
+            self.assertEqual(
+                _validated_url("http://waf:8080/audit", "k",
+                               trusted_internal_hosts=("waf",)),
+                "http://waf:8080/audit")
+        # Allowlist is checked before DNS, so no lookup is performed.
+        resolver.assert_not_called()
+
+    def test_ssrf_allows_public_hostname(self) -> None:
+        with patch("ed_bt_ade.config.socket.getaddrinfo",
+                   self._resolved("104.26.13.38")):
+            self.assertEqual(
+                _validated_url("https://api.abuseipdb.com/api/v2/check", "k"),
+                "https://api.abuseipdb.com/api/v2/check")
 
 
 if __name__ == "__main__":
