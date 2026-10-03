@@ -7,6 +7,73 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.2.2] — CI supply-chain hardening, non-root WAF, beginner README
+
+### Security
+
+- **GitHub Actions mutable tag'leri SHA'ya sabitlendi (A1).** `ci.yml` içindeki
+  her `uses:` ifadesi artık 40 karakterlik commit SHA'sı kullanıyor (`@v4`
+  yerine `@11d5960…` gibi), yanına da hangi tag'e karşılık geldiği yorum olarak
+  yazıldı. 10 farklı action doğrulandı: `actions/checkout`,
+  `actions/setup-python`, `actions/setup-node`, `actions/upload-artifact`,
+  `pnpm/action-setup`, `gitleaks/gitleaks-action`,
+  `docker/setup-buildx-action`, `docker/build-push-action`,
+  `anchore/sbom-action` (ve `download-syft` alt dizini) ve
+  `aquasecurity/trivy-action`. Bir action sahibinin hesabı ele geçirilirse ya da
+  tag sessizce başka bir commit'e taşınırsa (trivy-action ve
+  kics-github-action için gerçek örnekler), CI runner'ında keyfi kod çalışması
+  artık mümkün değil.
+- **`curl | sh` kurulum deseni kaldırıldı (A2).** Trivy daha önce
+  `raw.githubusercontent.com/.../install.sh` betiğini doğrulamadan `sh` ile
+  çalıştırıyordu. Aynı iş artık dosyada zaten kullanılan, SHA'ya sabitlenmiş
+  resmi `aquasecurity/trivy-action` ile yapılıyor: aynı `trivy config` alt komutu,
+  aynı `HIGH,CRITICAL` eşiği, aynı `exit-code: 1` davranışı — Dockerfile ve
+  docker-compose.yml için ayrı adımlar hâlinde.
+- **WAF container'ı artık root olarak çalışmıyor (A3).**
+  `deploy/waf/Dockerfile` içine `USER waf` eklendi. Base `caddy:2.11.4` imajı
+  `caddy` kullanıcısı içermediği için `addgroup`/`adduser -S -D -H` ile uid
+  10001'li ayrı bir sistem kullanıcısı oluşturuluyor. `entrypoint.sh`'in
+  yazma ihtiyacı olan dizinler (`/tmp/caddy/*` tmpfs ve `/var/log/waf` audit
+  volume'ü) kullanıcıya veriliyor; compose'un `read_only` + `tmpfs`
+  ayarlarıyla çakışma yok — container gerçek compose koşullarıyla
+  doğrulandı (`mode=detect engine=DetectionOnly`, audit dosyası yazılabilir,
+  Coraza/OWASP CRS kuralları çalışır).
+- **npm/pnpm tedarik-zinciri sertleştirmesi (A4).** `.npmrc`'ye
+  `min-release-age=7`, `pnpm-workspace.yaml`'a `minimumReleaseAge: 10080`
+  (24 saatten 7 güne), `blockExoticSubdeps: true` ve
+  `trustPolicy: no-downgrade` eklendi. Ayrıca build-script beyaz listesi
+  `@clerk/shared` içerecek şekilde tamamlandı; hem pnpm 10
+  (`onlyBuiltDependencies`) hem pnpm 11+ (`allowBuilds`) sözdizimi birlikte
+  bildirildi, böylece iki ana sürümde de `ERR_PNPM_IGNORED_BUILDS` oluşmuyor.
+- **`Dockerfile` dashboard varlığını kopyalamıyordu.** `bastionfw/web/`
+  dizini imaja hiç girmiyordu; `dashboard.py` `WEB_ROOT`'u `<paket>/web`
+  olarak çözdüğü için container'da panel arayüzü **hiç yoktu** ve
+  `GET /` `500 dashboard asset unavailable` döndürüyordu (`/api/status` ise
+  çalışıyordu, yani hata sessizce geçiyordu). `COPY bastionfw/web ./web`
+  eklendi; yeni imajda `/` 200 ile HTML döndürüyor.
+
+### Documentation
+
+- **README sıfırdan yazıldı.** 125 → 900+ satır: projenin ne işe yaradığı,
+  hangi durumlarda kullanılmadığı, 5 dakikalık zihinsel model (ASCII şema),
+  terimler sözlüğü, iki ayrı kurulum yolu (Docker / elle), "ilk 10 dakika"
+  anlatımı, her yapılandırma alanının tablo hâlinde açıklaması, panel ve API
+  uçları, dry-run → gerçek engelleme için 6 aşamalı güvenli geçiş, WAF
+  bölümü ve 11 senaryolu sorun giderme rehberi. Kurulum komutlarının tamamı
+  çalıştırılarak doğrulandı.
+- **Yanlış pozitifler gerekçelendirildi.** `rollback.py`'deki `0o700`
+  (root'a ait deadman-watchdog betiği) ve `dispatcher.py` /
+  `threat_intel.py` içindeki `urlopen` çağrıları (giriş `parse_ip()` veya
+  `_validated_url()` ile doğrulanmış, şema `http`/`https` ile sınırlı)
+  değiştirilmedi; her birine kodu referans alan teknik gerekçe yazıldı.
+
+### Changed
+
+- Semgrep'in `nosemgrep` bastırma yorumları `try`/`except` blokları içinde
+  etkili olmadığı için, üç konumda da işaretçi ilgili kod satırının sonuna
+  taşındı. Yanlış yerde bırakılmış bir bastırma, hiç bulgu yokmuş gibi
+  göründüğü için sessizce yanıltıcıydı.
+
 ## [3.2.1] — SSRF hostname-resolution fix
 
 ### Security
@@ -158,7 +225,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Threat-intel URL encoding hardening (canonical IP re-validation before
   any outbound request).
 
-[Unreleased]: https://github.com/caganutkusaymaz1/BastionFW/compare/v3.2.1...HEAD
+[Unreleased]: https://github.com/caganutkusaymaz1/BastionFW/compare/v3.2.2...HEAD
+[3.2.2]: https://github.com/caganutkusaymaz1/BastionFW/compare/v3.2.1...v3.2.2
 [3.2.1]: https://github.com/caganutkusaymaz1/BastionFW/compare/v3.2.0...v3.2.1
 [3.2.0]: https://github.com/caganutkusaymaz1/BastionFW/compare/v3.1.0...v3.2.0
 [3.1.0]: https://github.com/caganutkusaymaz1/BastionFW/compare/v3.0.0...v3.1.0

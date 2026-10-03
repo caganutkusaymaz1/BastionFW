@@ -25,7 +25,7 @@
 #     - typescript
 #
 # ============================================================================
-minimumReleaseAge: 1440
+minimumReleaseAge: 10080
 
 minimumReleaseAgeExclude:
   # Exclude @replit scoped packages from the minimum release age check.
@@ -33,6 +33,10 @@ minimumReleaseAgeExclude:
   # this setting guards against does not apply to our own packages.
   - '@replit/*'
   - stripe-replit-sync
+
+blockExoticSubdeps: true
+
+trustPolicy: no-downgrade
 
 packages:
   - artifacts/*
@@ -67,12 +71,6 @@ catalog:
   zod: ^3.25.76
 
 autoInstallPeers: false
-
-onlyBuiltDependencies:
-  - '@swc/core'
-  - esbuild
-  - msw
-  - unrs-resolver
 
 overrides:
   # replit uses linux-x64 only, we can exclude all other platforms
@@ -158,3 +156,26 @@ overrides:
   # drizzle-kit uses esbuild internally on an older version that's vulnerable, this overrides it
   "@esbuild-kit/esm-loader": "npm:tsx@^4.21.0"
   esbuild: "0.27.3"
+
+# Build-script allowlist. `onlyBuiltDependencies` is the pnpm 10 form and is
+# kept for the CI pnpm version; `allowBuilds` is the pnpm 11+ equivalent that
+# `pnpm approve-builds --all` writes. Both are declared so the install is not
+# broken by an ERR_PNPM_IGNORED_BUILDS failure on either major version.
+#   - @clerk/shared  postinstall (telemetry notice only)
+#   - esbuild        downloads/links the platform binary
+#   - @swc/core      native binding used by the Vite toolchain
+#   - msw            service-worker build step
+#   - unrs-resolver  native binding used by eslint-import-resolver
+onlyBuiltDependencies:
+  - '@clerk/shared'
+  - '@swc/core'
+  - esbuild
+  - msw
+  - unrs-resolver
+
+allowBuilds:
+  '@clerk/shared': true
+  '@swc/core': true
+  esbuild: true
+  msw: true
+  unrs-resolver: true

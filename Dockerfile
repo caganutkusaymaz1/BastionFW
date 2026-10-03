@@ -20,6 +20,11 @@ WORKDIR /app
 COPY bastionfw/pyproject.toml bastionfw/README.md ./
 COPY bastionfw/requirements.lock ./requirements.lock
 COPY bastionfw/ed_bt_ade ./ed_bt_ade
+# The dashboard serves web/dashboard.html from WEB_ROOT
+# (dashboard.py resolves it as <package parent>/web). Without this COPY the
+# container ships no dashboard asset and GET / answers 500 "dashboard asset
+# unavailable" while /api/status still works.
+COPY bastionfw/web ./web
 
 # Install from the hash-pinned lock file: every artifact is verified against
 # its recorded sha256 before installation (pip refuses mismatches), then the

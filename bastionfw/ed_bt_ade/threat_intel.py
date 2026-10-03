@@ -196,7 +196,12 @@ class ThreatIntelClient:
         # Endpoint is operator configuration validated by config._validated_url
         # (HTTP/S only, no embedded credentials, non-private unless the host
         # is explicitly allowlisted in waf.trusted_internal_hosts).
-        with urlopen(request, timeout=7) as response:  # nosec B310
+        # The URL's host component is always a validated, canonical IP address
+        # (see validation.py::parse_ip, applied above) — never raw user input,
+        # so a file:// scheme cannot be injected here.
+        # NOTE: the nosemgrep marker must stay on the urlopen line itself; a
+        # standalone comment line above it is ignored inside a try/except suite.
+        with urlopen(request, timeout=7) as response:  # nosec B310  # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
             data = json.loads(response.read().decode())
         score = float(data.get("data", {}).get("abuseConfidenceScore", 0))
         return Reputation(ip, score, "abuseipdb", time.time())

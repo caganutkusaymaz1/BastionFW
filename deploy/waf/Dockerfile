@@ -30,4 +30,18 @@ COPY Caddyfile /etc/caddy/Caddyfile.bastionfw
 COPY entrypoint.sh /usr/local/bin/bastionfw-waf-entrypoint.sh
 RUN chmod 0755 /usr/local/bin/bastionfw-waf-entrypoint.sh
 
+# Run as a dedicated non-root user. The base caddy image ships no `caddy`
+# account (only `nobody`), so create one here. entrypoint.sh only needs to
+# read /etc/caddy/Caddyfile.bastionfw and write to the tmpfs-backed XDG
+# dirs (/tmp/caddy/...) plus the shared audit dir; docker-compose.yml mounts
+# the root filesystem read-only and /tmp as rw,noexec,nosuid tmpfs, so those
+# paths are the only writable ones needed at runtime.
+RUN addgroup -S waf \
+    && adduser -S -D -H -h /nonexistent -s /sbin/nologin -G waf -u 10001 waf \
+    && mkdir -p /tmp/caddy/data /tmp/caddy/config \
+    && chown -R waf:waf /tmp/caddy /var/log/waf \
+    && chmod 0755 /etc/caddy/Caddyfile.bastionfw
+
+USER waf
+
 ENTRYPOINT ["/usr/local/bin/bastionfw-waf-entrypoint.sh"]

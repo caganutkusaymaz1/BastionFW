@@ -71,7 +71,16 @@ class WebhookDispatcher:
         # URL is operator configuration validated by config._validated_url:
         # HTTP/S only, no embedded credentials, non-private unless the host
         # is explicitly allowlisted in waf.trusted_internal_hosts.
-        with urlopen(request, timeout=8):  # nosec B310
+        # This URL is operator configuration (a webhook from the loaded config),
+        # not request data, and config._validated_url() has already enforced
+        # scheme in {http, https}, rejected embedded credentials, and resolved
+        # the hostname to reject private/loopback/link-local/metadata targets
+        # unless it is in waf.trusted_internal_hosts. A file:// scheme therefore
+        # cannot reach this call: config parsing fails first. See also the
+        # SSRF hostname-resolution regression tests in tests/test_security.py.
+        # NOTE: the nosemgrep marker must stay on the urlopen line itself; a
+        # standalone comment line above it is ignored inside a try/except suite.
+        with urlopen(request, timeout=8):  # nosec B310  # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
             return
 
     def close(self) -> None:

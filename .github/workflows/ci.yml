@@ -17,10 +17,10 @@ jobs:
         working-directory: bastionfw
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.13"
           cache: pip
@@ -55,15 +55,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Set up pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
           version: 10
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "22"
           cache: pnpm
@@ -91,12 +91,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
 
       - name: Gitleaks
-        uses: gitleaks/gitleaks-action@v2
+        uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -108,13 +108,13 @@ jobs:
       packages: read
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
       - name: Build bastionfw image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
           file: ./Dockerfile
@@ -123,7 +123,7 @@ jobs:
           load: true
 
       - name: Build waf image (BastionFW Coraza layer)
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: ./deploy/waf
           file: ./deploy/waf/Dockerfile
@@ -131,11 +131,13 @@ jobs:
           tags: waf:latest
           load: true
 
+      # download-syft is a sub-action of the same sbom-action repository and
+      # tag, so it resolves to the same commit.
       - name: Install Syft (SBOM)
-        uses: anchore/sbom-action/download-syft@v0
+        uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610 # v0
 
       - name: Generate SBOM for bastionfw image
-        uses: anchore/sbom-action@v0
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
         with:
           image: bastionfw:latest
           format: cyclonedx-json
@@ -143,7 +145,7 @@ jobs:
           upload-artifact: true
 
       - name: Generate SBOM for waf image
-        uses: anchore/sbom-action@v0
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
         with:
           image: waf:latest
           format: cyclonedx-json
@@ -154,19 +156,33 @@ jobs:
         run: |
           cp bastionfw/requirements.lock /tmp/requirements.txt
           syft scan dir:/tmp -o cyclonedx-json > sbom-python-deps.cdx.json
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: sbom-python-deps.cdx.json
           path: sbom-python-deps.cdx.json
 
+      # IaC misconfiguration lint via the official pinned action instead of
+      # piping a remote install.sh into sh (A2). `trivy config` is the exact
+      # sub-command the previous inline install used, with the same severity
+      # gate and non-zero exit on findings.
       - name: Trivy config scan (Dockerfile hardening lint)
-        run: |
-          curl -sL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
-          trivy config --severity HIGH,CRITICAL --exit-code 1 Dockerfile
-          trivy config --severity HIGH,CRITICAL --exit-code 1 docker-compose.yml
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: config
+          scan-ref: Dockerfile
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+
+      - name: Trivy config scan (Compose hardening lint)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: config
+          scan-ref: docker-compose.yml
+          severity: HIGH,CRITICAL
+          exit-code: "1"
 
       - name: Trivy scan bastionfw image
-        uses: aquasecurity/trivy-action@v0.36.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: bastionfw:latest
           severity: HIGH,CRITICAL
@@ -174,7 +190,7 @@ jobs:
           ignore-unfixed: true
 
       - name: Trivy scan waf image
-        uses: aquasecurity/trivy-action@v0.36.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: waf:latest
           severity: HIGH,CRITICAL

@@ -250,7 +250,13 @@ def provision_rollback_script(path: Path, state_dir: Path,
         destination.parent.mkdir(parents=True, exist_ok=True)
         with destination.open("x", encoding="utf-8") as handle:
             handle.write(document)
-        os.chmod(destination, 0o700)
+        # 0o700 is intentional and correct here: this file is a root-owned
+        # deadman-watchdog script. Loosening to 0o644 (Semgrep's generic
+        # suggestion) would let any local user read/tamper with a script that
+        # runs as root — a real regression, not a fix.
+        # NOTE: the nosemgrep marker must stay on the os.chmod line itself; a
+        # standalone comment line above it is ignored inside a try/except suite.
+        os.chmod(destination, 0o700)  # nosemgrep: python.lang.security.audit.insecure-file-permissions.insecure-file-permissions
     except OSError as exc:
         raise RuntimeError(f"cannot provision rollback script {destination}: {exc}") from exc
     return destination

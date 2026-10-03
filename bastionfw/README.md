@@ -1,4 +1,4 @@
-# BastionFW v3.2.1
+# BastionFW v3.2.2
 
 **Developer:** Cagan Utku Saymaz
 
